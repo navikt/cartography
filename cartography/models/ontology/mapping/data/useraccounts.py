@@ -484,6 +484,22 @@ USERACCOUNTS_ONTOLOGY_MAPPING: dict[str, OntologyMapping] = {
     "github": github_mapping,
     "gitlab": gitlab_mapping,
     "keycloak": keycloak_mapping,
+    "nais": OntologyMapping(
+        module_name="nais",
+        nodes=[
+            OntologyNodeMapping(
+                node_label="NaisMember",
+                fields=[
+                    OntologyFieldMapping(
+                        ontology_field="email",
+                        node_field="email",
+                        required=True,
+                    ),
+                    OntologyFieldMapping(ontology_field="fullname", node_field="name"),
+                ],
+            ),
+        ],
+    ),
     "oci": oci_mapping,
     "openai": openai_mapping,
     "scaleway": scaleway_mapping,

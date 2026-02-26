@@ -239,6 +239,10 @@ class Config:
     :param syft_s3_bucket: S3 bucket containing Syft scan results. Optional.
     :type syft_s3_prefix: str
     :param syft_s3_prefix: S3 prefix path containing Syft scan results. Optional.
+    :type nais_api_key: str
+    :param nais_api_key: API key / Bearer token for the NAIS GraphQL API. Optional.
+    :type nais_base_url: str
+    :param nais_base_url: Base URL for the NAIS GraphQL API (also used as tenant identifier). Optional.
     """
 
     def __init__(
@@ -361,6 +365,8 @@ class Config:
         syft_results_dir=None,
         syft_s3_bucket=None,
         syft_s3_prefix=None,
+        nais_api_key=None,
+        nais_base_url=None,
     ):
         self.neo4j_uri = neo4j_uri
         self.neo4j_user = neo4j_user
@@ -482,3 +488,5 @@ class Config:
         self.syft_results_dir = syft_results_dir
         self.syft_s3_bucket = syft_s3_bucket
         self.syft_s3_prefix = syft_s3_prefix
+        self.nais_api_key = nais_api_key
+        self.nais_base_url = nais_base_url
