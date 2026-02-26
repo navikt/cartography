@@ -1,0 +1,27 @@
+{
+    "name": "NAIS ownership analysis",
+    "statements": [
+        {
+            "__comment__": "NaisTeam RESPONSIBLE_FOR KubernetesPod via NaisApp -> KubernetesNamespace",
+            "query": "MATCH (t:NaisTeam)-[:HAS_APP]->(a:NaisApp)-[:RUNS_IN]->(ns:KubernetesNamespace)<-[:CONTAINS]-(pod:KubernetesPod) MERGE (t)-[r:RESPONSIBLE_FOR]->(pod) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
+            "iterative": false
+        },
+        {
+            "__comment__": "Delete stale RESPONSIBLE_FOR relationships",
+            "query": "MATCH (t:NaisTeam)-[r:RESPONSIBLE_FOR]->(pod:KubernetesPod) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE r RETURN COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        },
+        {
+            "__comment__": "KubernetesPod DEPLOYED_FROM GitHubRepository via KubernetesNamespace -> NaisApp -> NaisDeployment",
+            "query": "MATCH (pod:KubernetesPod)<-[:CONTAINS]-(ns:KubernetesNamespace)<-[:RUNS_IN]-(a:NaisApp)<-[:HAS_APP]-(t:NaisTeam)-[:HAS_DEPLOYMENT]->(d:NaisDeployment)-[:DEPLOYED_FROM]->(repo:GitHubRepository) WHERE d.environment_name = a.environment MERGE (pod)-[r:DEPLOYED_FROM]->(repo) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
+            "iterative": false
+        },
+        {
+            "__comment__": "Delete stale pod DEPLOYED_FROM GitHubRepository relationships",
+            "query": "MATCH (pod:KubernetesPod)-[r:DEPLOYED_FROM]->(repo:GitHubRepository) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE r RETURN COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        }
+    ]
+}
