@@ -5,7 +5,7 @@ WORKDIR /home/nonroot
 ENV HOME=/home/nonroot
 COPY --chown=nonroot:nonroot . /home/nonroot/src
 USER nonroot
-RUN uv tool install /home/nonroot/src
+RUN uv tool install /home/nonroot/src && chmod -R o+rX /home/nonroot/.local
 
 FROM europe-north1-docker.pkg.dev/cgr-nav/pull-through/nav.no/python:3.10-dev AS production
 COPY --from=builder --chown=nonroot:nonroot /home/nonroot/.local /home/nonroot/.local
