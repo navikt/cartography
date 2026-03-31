@@ -230,6 +230,7 @@ def fetch_all(
     data: PaginatedGraphqlData = PaginatedGraphqlData(nodes=[], edges=[])
     retry = 0
     null_resource_retry = 0
+    original_count = kwargs.get("count")
 
     while has_next_page:
         exc: Any = None
@@ -238,7 +239,11 @@ def fetch_all(
             # But we still need at least one call to the REST endpoint in case the graphql remaining is already 0
             handle_rate_limit_sleep(token)
             resp = fetch_page(token, api_url, organization, query, cursor, **kwargs)
-            retry = 0
+            # Only reset the retry counter when operating at full page size.
+            # If page size has been degraded due to 502s, keep the retry count
+            # so that persistent 502s eventually exhaust retries and raise.
+            if kwargs.get("count") == original_count:
+                retry = 0
         except requests.exceptions.Timeout as err:
             retry += 1
             exc = err
@@ -251,7 +256,8 @@ def fetch_all(
             ):
                 kwargs["count"] = max(1, kwargs["count"] // 2)
                 logger.warning(
-                    "GitHub: Received 502 response. Reducing page size to %s and retrying.",
+                    "GitHub: Received 502 response at cursor %s. Reducing page size to %s and retrying.",
+                    cursor,
                     kwargs["count"],
                 )
                 continue

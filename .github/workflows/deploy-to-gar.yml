@@ -1,0 +1,30 @@
+name: Build and push Docker image to GAR
+
+on:
+  push:
+    branches:
+      - nais-module
+  workflow_dispatch: {}
+
+jobs:
+  build-and-push:
+    name: Build and push to GAR
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build and push
+        uses: nais/docker-build-push@v0
+        id: docker-push
+        with:
+          team: appsec
+          tenant: nav
+          dockerfile: nais.Dockerfile
+          docker_context: .
+          build_args: |
+            uid=10001
+            gid=10001
