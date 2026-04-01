@@ -451,6 +451,7 @@ def _get_dep_manifests_for_repos(
     org: str,
     api_url: str,
     token: str,
+    skip_archived_repos: bool = False,
 ) -> dict[str, dict[str, Any]]:
     """
     For every repo in the given list, retrieve its dependency graph manifests individually.
@@ -475,6 +476,12 @@ def _get_dep_manifests_for_repos(
         repo_name = repo.get("name")
         repo_url = repo.get("url")
         if not repo_name or not repo_url:
+            continue
+        if skip_archived_repos and repo.get("isArchived"):
+            logger.debug(
+                "Skipping dependency manifest fetch for archived repo %s.",
+                repo_name,
+            )
             continue
 
         try:
@@ -1810,6 +1817,7 @@ def sync(
     github_api_key: str,
     github_url: str,
     organization: str,
+    github_skip_archived_repo_manifests: bool = False,
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -1882,6 +1890,7 @@ def sync(
         organization,
         github_url,
         github_api_key,
+        skip_archived_repos=github_skip_archived_repo_manifests,
     )
     for repo in repos_json:
         if repo is not None and repo.get("url") in dep_manifests_by_url:

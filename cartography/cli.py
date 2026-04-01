@@ -702,6 +702,15 @@ class CLI:
                     hidden=PANEL_GITHUB not in visible_panels,
                 ),
             ] = 30,
+            github_skip_archived_repo_manifests: Annotated[
+                bool,
+                typer.Option(
+                    "--github-skip-archived-repo-manifests",
+                    help="Skip dependency manifest fetching for archived GitHub repos.",
+                    rich_help_panel=PANEL_GITHUB,
+                    hidden=PANEL_GITHUB not in visible_panels,
+                ),
+            ] = False,
             # =================================================================
             # GitLab Options
             # =================================================================
@@ -2297,6 +2306,7 @@ class CLI:
                 okta_saml_role_regex=okta_saml_role_regex,
                 github_config=github_config,
                 github_commit_lookback_days=github_commit_lookback_days,
+                github_skip_archived_repo_manifests=github_skip_archived_repo_manifests,
                 digitalocean_token=digitalocean_token,
                 permission_relationships_file=permission_relationships_file,
                 azure_permission_relationships_file=azure_permission_relationships_file,

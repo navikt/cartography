@@ -4,6 +4,7 @@ from unittest.mock import patch
 
 import cartography.intel.github.repos
 from cartography.intel.github.repos import _fetch_manifest_page
+from cartography.intel.github.repos import _get_dep_manifests_for_repos
 from cartography.intel.github.repos import _create_git_url_from_ssh_url
 from cartography.intel.github.repos import _merge_repos_with_privileged_details
 from cartography.intel.github.repos import _repos_need_privileged_details
@@ -48,6 +49,35 @@ def test_fetch_manifest_page_logs_replay_command_on_graphql_timeout(
     assert warning_call is not None
     assert "Replay locally with:" in warning_call.args[0]
     assert "big-repo" in warning_call.args
+
+
+@patch.object(cartography.intel.github.repos, "_get_repo_dep_manifests")
+def test_get_dep_manifests_for_repos_skips_archived_when_enabled(
+    mock_get_repo_dep_manifests: Mock,
+):
+    archived_repo = {
+        "name": "archived-repo",
+        "url": "https://github.com/navikt/archived-repo",
+        "isArchived": True,
+    }
+    active_repo = {
+        "name": "active-repo",
+        "url": "https://github.com/navikt/active-repo",
+        "isArchived": False,
+    }
+    mock_get_repo_dep_manifests.return_value = [{"blobPath": "/package.json"}]
+
+    result = _get_dep_manifests_for_repos(
+        [archived_repo, active_repo],
+        "navikt",
+        "https://api.github.com/graphql",
+        "token",
+        skip_archived_repos=True,
+    )
+
+    assert mock_get_repo_dep_manifests.call_count == 1
+    assert mock_get_repo_dep_manifests.call_args.args[3] == "active-repo"
+    assert "https://github.com/navikt/archived-repo" not in result
 
 
 def test_transform_dependency_manifests_converts_to_expected_format():

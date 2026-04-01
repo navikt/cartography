@@ -84,6 +84,7 @@ def start_github_ingestion(neo4j_session: neo4j.Session, config: Config) -> None
             token,
             api_url,
             org_name,
+            config.github_skip_archived_repo_manifests,
         )
         cartography.intel.github.teams.sync_github_teams(
             neo4j_session,
