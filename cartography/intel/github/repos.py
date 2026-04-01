@@ -27,6 +27,7 @@ from cartography.helpers import backoff_handler
 from cartography.intel.github.codeowners import normalize_repo_relative_path
 from cartography.intel.github.lockfiles import parse_npm_lock
 from cartography.intel.github.lockfiles import parse_uv_lock
+from cartography.intel.github.util import _build_gh_graphql_replay_command
 from cartography.intel.github.util import call_github_rest_api
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import fetch_all_rest_api_pages
@@ -272,6 +273,13 @@ def _fetch_manifest_page(
     HTTP 200 but with errors and null data in the response body).
     Returns the raw response dict, or None if all retries failed.
     """
+    replay_command = _build_gh_graphql_replay_command(
+        GITHUB_REPO_DEP_MANIFESTS_PAGINATED_GRAPHQL,
+        organization,
+        manifest_cursor,
+        repo=repo,
+        depCursor=dep_cursor,
+    )
     for attempt in range(retries):
         try:
             handle_rate_limit_sleep(token)
@@ -291,6 +299,16 @@ def _fetch_manifest_page(
             requests.exceptions.ChunkedEncodingError,
         ):
             if attempt + 1 >= retries:
+                logger.warning(
+                    "Failed to fetch dependency manifest page for repo %s after %d retries "
+                    "(manifest_cursor=%s, dep_cursor=%s). Replay locally with: %s",
+                    repo,
+                    retries,
+                    manifest_cursor,
+                    dep_cursor,
+                    replay_command,
+                    exc_info=True,
+                )
                 return None
             time.sleep(2 ** (attempt + 1))
             continue
@@ -303,9 +321,14 @@ def _fetch_manifest_page(
         if dep_manifests is None and resp.get("errors"):
             if attempt + 1 >= retries:
                 logger.warning(
-                    "GraphQL timeout fetching dependency manifests for repo %s after %d retries.",
+                    "GraphQL timeout fetching dependency manifests for repo %s after %d retries "
+                    "(manifest_cursor=%s, dep_cursor=%s). Replay locally with: %s. Errors: %s",
                     repo,
                     retries,
+                    manifest_cursor,
+                    dep_cursor,
+                    replay_command,
+                    resp.get("errors"),
                 )
                 return resp
             logger.debug(
