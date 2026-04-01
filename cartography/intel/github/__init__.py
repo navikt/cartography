@@ -127,6 +127,7 @@ def start_github_ingestion(
             token,
             api_url,
             org_name,
+            config.github_skip_archived_repo_manifests,
         )
         cartography.intel.github.personal_access_tokens.sync(
             neo4j_session,
