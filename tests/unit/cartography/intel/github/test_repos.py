@@ -1,7 +1,9 @@
 from copy import deepcopy
+from unittest.mock import Mock
 from unittest.mock import patch
 
 import cartography.intel.github.repos
+from cartography.intel.github.repos import _fetch_manifest_page
 from cartography.intel.github.repos import _create_git_url_from_ssh_url
 from cartography.intel.github.repos import _merge_repos_with_privileged_details
 from cartography.intel.github.repos import _repos_need_privileged_details
@@ -14,6 +16,38 @@ from tests.data.github.repos import DEPENDENCY_GRAPH_WITH_MULTIPLE_ECOSYSTEMS
 from tests.data.github.repos import GET_REPOS
 
 TEST_UPDATE_TAG = 123456789
+
+
+@patch("cartography.intel.github.repos.logger")
+@patch("cartography.intel.github.repos.time.sleep")
+@patch("cartography.intel.github.repos.handle_rate_limit_sleep")
+@patch("cartography.intel.github.repos.fetch_page")
+def test_fetch_manifest_page_logs_replay_command_on_graphql_timeout(
+    mock_fetch_page: Mock,
+    mock_handle_rate_limit_sleep: Mock,
+    mock_sleep: Mock,
+    mock_logger: Mock,
+):
+    mock_fetch_page.return_value = {
+        "data": {"organization": {"repository": {"dependencyGraphManifests": None}}},
+        "errors": [{"message": "timedout"}],
+    }
+
+    result = _fetch_manifest_page(
+        token="token",
+        api_url="https://api.github.com/graphql",
+        organization="navikt",
+        repo="big-repo",
+        manifest_cursor="cursor1",
+        dep_cursor="cursor2",
+        retries=1,
+    )
+
+    assert result is not None
+    warning_call = mock_logger.warning.call_args
+    assert warning_call is not None
+    assert "Replay locally with:" in warning_call.args[0]
+    assert "big-repo" in warning_call.args
 
 
 def test_transform_dependency_manifests_converts_to_expected_format():
