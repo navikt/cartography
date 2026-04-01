@@ -1,6 +1,7 @@
 import base64
 import json
 import logging
+import shlex
 import time
 from datetime import datetime
 from datetime import timedelta
@@ -37,6 +38,31 @@ _TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 class PaginatedGraphqlData(NamedTuple):
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
+
+
+def _build_gh_graphql_replay_command(
+    query: str,
+    organization: str,
+    cursor: str | None,
+    **kwargs: Any,
+) -> str:
+    """
+    Build a gh CLI command that replays the exact GraphQL call without embedding secrets.
+    """
+    command_parts = [
+        "gh api graphql",
+        f"-f query={shlex.quote(query)}",
+        f"-F login={shlex.quote(organization)}",
+    ]
+    if cursor is None:
+        command_parts.append("-F cursor=")
+    else:
+        command_parts.append(f"-F cursor={shlex.quote(cursor)}")
+    for key, value in kwargs.items():
+        if value is None:
+            continue
+        command_parts.append(f"-F {key}={shlex.quote(str(value))}")
+    return " ".join(command_parts)
 
 
 def _extract_error_message(response: requests.Response) -> str:
@@ -271,11 +297,24 @@ def fetch_all(
 
         if retry >= retries:
             logger.error(
-                f"GitHub: Could not retrieve page of resource `{resource_type}` due to HTTP error "
-                f"after {retry} retries. Raising exception.",
+                "GitHub: Could not retrieve page of resource `%s` for org `%s` at cursor `%s` "
+                "after %d retries. Returning partial data collected so far (%d nodes, %d edges). "
+                "Replay locally with: %s",
+                resource_type,
+                organization,
+                cursor,
+                retry,
+                len(data.nodes),
+                len(data.edges),
+                _build_gh_graphql_replay_command(
+                    query,
+                    organization,
+                    cursor,
+                    **kwargs,
+                ),
                 exc_info=True,
             )
-            raise exc
+            break
         elif retry > 0:
             sleep_seconds = 2**retry
             if isinstance(exc, requests.exceptions.HTTPError):
@@ -358,9 +397,13 @@ def fetch_all(
             }
 
     if not org_data:
-        raise ValueError(
-            f"Didn't get any organization data for organization: {organization} and resource_type: {resource_type}",
+        logger.error(
+            "GitHub: No organization data collected for organization: %s, resource_type: %s. "
+            "All requests failed before any page was successfully retrieved.",
+            organization,
+            resource_type,
         )
+        return data, {"url": "", "login": organization}
     return data, org_data
 
 

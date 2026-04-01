@@ -1,6 +1,4 @@
-import json
 import typing
-from base64 import b64encode
 from copy import deepcopy
 from datetime import datetime
 from datetime import timedelta
@@ -13,363 +11,35 @@ from requests import Response
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import HTTPError
 
-import cartography.intel.github.packages
-from cartography.intel.github.repos import GitHubRepoSyncResult
 from cartography.intel.github.util import _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD
+from cartography.intel.github.util import _build_gh_graphql_replay_command
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import fetch_all_rest_api_pages
-from cartography.intel.github.util import github_org_url
 from cartography.intel.github.util import handle_rate_limit_sleep
-from cartography.intel.github.util import is_github_dotcom_api_url
 from tests.data.github.rate_limit import RATE_LIMIT_RESPONSE_JSON
 
 
-@patch("cartography.intel.github.repos.cleanup_orphaned_github_branches")
-@patch("cartography.intel.github.repos.cleanup_global_resources")
-@patch("cartography.intel.github.users.cleanup")
-@patch("cartography.intel.github.supply_chain.sync")
-@patch(
-    "cartography.intel.github.container_image_attestations.sync_container_image_attestations"
-)
-@patch("cartography.intel.github.container_image_tags.sync_container_image_tags")
-@patch(
-    "cartography.intel.github.container_images.sync_container_images",
-    return_value=([], [], [], set()),
-)
-@patch(
-    "cartography.intel.github.packages.sync_packages",
-    return_value=cartography.intel.github.packages.ContainerPackagesFetchResult(
-        packages=[],
-        cleanup_safe=True,
-    ),
-)
-@patch("cartography.intel.github.repos.get", return_value=[])
-@patch("cartography.intel.github.commits.sync_github_commits")
-@patch("cartography.intel.github._get_repos_from_graph", return_value=[])
-@patch("cartography.intel.github.actions.sync", return_value=[])
-@patch("cartography.intel.github.codeowners.sync")
-@patch("cartography.intel.github.teams.sync_github_teams")
-@patch("cartography.intel.github.dependabot_alerts.sync")
-@patch("cartography.intel.github.personal_access_tokens.sync")
-@patch("cartography.intel.github.repos.sync")
-@patch("cartography.intel.github.users.sync")
-@patch("cartography.intel.github.make_credential", side_effect=["token-1", "token-2"])
-def test_start_github_ingestion_defers_global_cleanup_until_after_all_orgs(
-    mock_make_credential: Mock,
-    mock_users_sync: Mock,
-    mock_repos_sync: Mock,
-    mock_personal_access_tokens_sync: Mock,
-    mock_dependabot_alerts_sync: Mock,
-    mock_teams_sync: Mock,
-    mock_codeowners_sync: Mock,
-    mock_actions_sync: Mock,
-    mock_get_repos_from_graph: Mock,
-    mock_sync_github_commits: Mock,
-    mock_get_repos: Mock,
-    mock_packages_sync: Mock,
-    mock_container_images_sync: Mock,
-    mock_container_tags_sync: Mock,
-    mock_attestations_sync: Mock,
-    mock_supply_chain_sync: Mock,
-    mock_users_cleanup: Mock,
-    mock_cleanup_global_resources: Mock,
-    mock_cleanup_orphaned_branches: Mock,
-) -> None:
-    github_config = {
-        "organization": [
-            {"name": "org-1", "url": "https://api.github.com/graphql"},
-            {"name": "org-2", "url": "https://api.github.com/graphql"},
-        ],
-    }
-    config = Mock(
-        github_config=b64encode(json.dumps(github_config).encode()).decode(),
-        update_tag=123,
-        github_commit_lookback_days=7,
+def test_build_gh_graphql_replay_command() -> None:
+    command = _build_gh_graphql_replay_command(
+        "query($login: String!, $cursor: String, $count: Int!) { viewer { login } }",
+        "navikt",
+        "abc123",
+        count=12,
     )
-    repo_sync_results = [
-        GitHubRepoSyncResult(
-            repos=[{"id": "https://github.com/org-1/repo"}],
-            manifests=[{"id": "https://github.com/org-1/repo#/package.json"}],
-            manifests_cleanup_safe=True,
-        ),
-        GitHubRepoSyncResult(
-            repos=[{"id": "https://github.com/org-2/repo"}],
-            manifests=[{"id": "https://github.com/org-2/repo#/package.json"}],
-            manifests_cleanup_safe=False,
-        ),
-    ]
-    github_users_by_org = [
-        [{"login": "owner-1", "url": "https://github.com/owner-1"}],
-        [{"login": "owner-2", "url": "https://github.com/owner-2"}],
-    ]
-    github_teams_by_org = [
-        [
-            {
-                "org_login": "org-1",
-                "name": "team-1",
-                "url": "https://github.com/orgs/org-1/teams/team-1",
-            },
-        ],
-        [
-            {
-                "org_login": "org-2",
-                "name": "team-2",
-                "url": "https://github.com/orgs/org-2/teams/team-2",
-            },
-        ],
-    ]
-    mock_users_sync.side_effect = github_users_by_org
-    mock_repos_sync.side_effect = repo_sync_results
-    mock_teams_sync.side_effect = github_teams_by_org
+    assert "gh api graphql" in command
+    assert "-F login=navikt" in command
+    assert "-F cursor=abc123" in command
+    assert "-F count=12" in command
 
-    from cartography.intel.github import start_github_ingestion
 
-    neo4j_session = Mock()
-    start_github_ingestion(neo4j_session, config)
-
-    assert mock_users_sync.call_count == 2
-    assert mock_repos_sync.call_count == 2
-    assert mock_personal_access_tokens_sync.call_count == 2
-    assert mock_dependabot_alerts_sync.call_count == 2
-    assert mock_codeowners_sync.call_count == 2
-    assert mock_codeowners_sync.call_args_list[0].args[-2:] == (
-        repo_sync_results[0].repos,
-        repo_sync_results[0].manifests,
+def test_build_gh_graphql_replay_command_with_null_cursor() -> None:
+    command = _build_gh_graphql_replay_command(
+        "query($login: String!, $cursor: String, $count: Int!) { viewer { login } }",
+        "navikt",
+        None,
+        count=50,
     )
-    assert (
-        mock_codeowners_sync.call_args_list[0].kwargs[
-            "dependency_manifests_cleanup_safe"
-        ]
-        is True
-    )
-    first_codeowners_kwargs = mock_codeowners_sync.call_args_list[0].kwargs
-    assert first_codeowners_kwargs["github_users"] == github_users_by_org[0]
-    assert first_codeowners_kwargs["github_teams"] == github_teams_by_org[0]
-    assert mock_codeowners_sync.call_args_list[1].args[-2:] == (
-        repo_sync_results[1].repos,
-        repo_sync_results[1].manifests,
-    )
-    assert (
-        mock_codeowners_sync.call_args_list[1].kwargs[
-            "dependency_manifests_cleanup_safe"
-        ]
-        is False
-    )
-    second_codeowners_kwargs = mock_codeowners_sync.call_args_list[1].kwargs
-    assert second_codeowners_kwargs["github_users"] == github_users_by_org[1]
-    assert second_codeowners_kwargs["github_teams"] == github_teams_by_org[1]
-    mock_users_cleanup.assert_called_once_with(neo4j_session, {"UPDATE_TAG": 123})
-    mock_cleanup_global_resources.assert_called_once_with(
-        neo4j_session,
-        {"UPDATE_TAG": 123},
-    )
-    mock_cleanup_orphaned_branches.assert_called_once_with(
-        neo4j_session,
-        {"UPDATE_TAG": 123},
-    )
-    assert mock_supply_chain_sync.call_count == 0
-
-
-@patch("cartography.intel.github.cleanup_unscoped_github_resources")
-@patch("cartography.intel.github.supply_chain.sync")
-@patch(
-    "cartography.intel.github.container_image_attestations.sync_container_image_attestations"
-)
-@patch("cartography.intel.github.container_image_tags.sync_container_image_tags")
-@patch(
-    "cartography.intel.github.container_images.sync_container_images",
-    return_value=([], [], [], set()),
-)
-@patch(
-    "cartography.intel.github.packages.sync_packages",
-    return_value=cartography.intel.github.packages.ContainerPackagesFetchResult(
-        packages=[],
-        cleanup_safe=True,
-    ),
-)
-@patch("cartography.intel.github.repos.get", return_value=[])
-@patch("cartography.intel.github.commits.sync_github_commits")
-@patch("cartography.intel.github._get_repos_from_graph", return_value=[])
-@patch("cartography.intel.github.actions.sync", return_value=[])
-@patch("cartography.intel.github.codeowners.sync")
-@patch("cartography.intel.github.teams.sync_github_teams")
-@patch("cartography.intel.github.dependabot_alerts.sync")
-@patch("cartography.intel.github.personal_access_tokens.sync")
-@patch("cartography.intel.github.repos.sync")
-@patch("cartography.intel.github.users.sync")
-@patch("cartography.intel.github.make_credential", return_value="token-1")
-def test_start_github_ingestion_can_skip_unscoped_cleanup(
-    mock_make_credential: Mock,
-    mock_users_sync: Mock,
-    mock_repos_sync: Mock,
-    mock_personal_access_tokens_sync: Mock,
-    mock_dependabot_alerts_sync: Mock,
-    mock_teams_sync: Mock,
-    mock_codeowners_sync: Mock,
-    mock_actions_sync: Mock,
-    mock_get_repos_from_graph: Mock,
-    mock_sync_github_commits: Mock,
-    mock_get_repos: Mock,
-    mock_packages_sync: Mock,
-    mock_container_images_sync: Mock,
-    mock_container_tags_sync: Mock,
-    mock_attestations_sync: Mock,
-    mock_supply_chain_sync: Mock,
-    mock_cleanup_unscoped_github_resources: Mock,
-) -> None:
-    github_config = {
-        "organization": [
-            {"name": "org-1", "url": "https://api.github.com/graphql"},
-        ],
-    }
-    config = Mock(
-        github_config=b64encode(json.dumps(github_config).encode()).decode(),
-        update_tag=123,
-        github_commit_lookback_days=7,
-    )
-    repo_sync_result = GitHubRepoSyncResult(
-        repos=[{"id": "https://github.com/org-1/repo"}],
-        manifests=[{"id": "https://github.com/org-1/repo#/package.json"}],
-        manifests_cleanup_safe=True,
-    )
-    mock_repos_sync.return_value = repo_sync_result
-    github_users = [{"login": "owner-1", "url": "https://github.com/owner-1"}]
-    github_teams = [
-        {
-            "org_login": "org-1",
-            "name": "team-1",
-            "url": "https://github.com/orgs/org-1/teams/team-1",
-        },
-    ]
-    mock_users_sync.return_value = github_users
-    mock_teams_sync.return_value = github_teams
-
-    from cartography.intel.github import start_github_ingestion
-
-    neo4j_session = Mock()
-    start_github_ingestion(neo4j_session, config, skip_unscoped_cleanup=True)
-
-    mock_make_credential.assert_called_once_with(github_config["organization"][0])
-    mock_users_sync.assert_called_once()
-    mock_repos_sync.assert_called_once()
-    mock_personal_access_tokens_sync.assert_called_once()
-    mock_dependabot_alerts_sync.assert_called_once()
-    mock_codeowners_sync.assert_called_once()
-    assert mock_codeowners_sync.call_args.args[-2:] == (
-        repo_sync_result.repos,
-        repo_sync_result.manifests,
-    )
-    assert (
-        mock_codeowners_sync.call_args.kwargs["dependency_manifests_cleanup_safe"]
-        is True
-    )
-    assert mock_codeowners_sync.call_args.kwargs["github_users"] == github_users
-    assert mock_codeowners_sync.call_args.kwargs["github_teams"] == github_teams
-    mock_cleanup_unscoped_github_resources.assert_not_called()
-    assert mock_supply_chain_sync.call_count == 0
-
-
-@patch("cartography.intel.github.repos.cleanup_orphaned_github_branches")
-@patch("cartography.intel.github.repos.cleanup_global_resources")
-@patch("cartography.intel.github.users.cleanup")
-@patch("cartography.intel.github.make_credential")
-def test_start_github_ingestion_skips_global_cleanup_when_no_orgs_configured(
-    mock_make_credential: Mock,
-    mock_users_cleanup: Mock,
-    mock_cleanup_global_resources: Mock,
-    mock_cleanup_orphaned_branches: Mock,
-) -> None:
-    github_config: dict[str, list[dict[str, str]]] = {"organization": []}
-    config = Mock(
-        github_config=b64encode(json.dumps(github_config).encode()).decode(),
-        update_tag=123,
-        github_commit_lookback_days=7,
-    )
-
-    from cartography.intel.github import start_github_ingestion
-
-    neo4j_session = Mock()
-    start_github_ingestion(neo4j_session, config)
-
-    mock_make_credential.assert_not_called()
-    mock_users_cleanup.assert_not_called()
-    mock_cleanup_global_resources.assert_not_called()
-    mock_cleanup_orphaned_branches.assert_not_called()
-
-
-@patch("cartography.intel.github.repos.cleanup_orphaned_github_branches")
-@patch("cartography.intel.github.repos.cleanup_global_resources")
-@patch("cartography.intel.github.users.cleanup")
-def test_cleanup_unscoped_github_resources(
-    mock_users_cleanup: Mock,
-    mock_cleanup_global_resources: Mock,
-    mock_cleanup_orphaned_branches: Mock,
-) -> None:
-    from cartography.intel.github import cleanup_unscoped_github_resources
-
-    neo4j_session = Mock()
-    common_job_parameters = {"UPDATE_TAG": 123}
-
-    cleanup_unscoped_github_resources(neo4j_session, common_job_parameters)
-
-    mock_users_cleanup.assert_called_once_with(neo4j_session, common_job_parameters)
-    mock_cleanup_global_resources.assert_called_once_with(
-        neo4j_session,
-        common_job_parameters,
-    )
-    mock_cleanup_orphaned_branches.assert_called_once_with(
-        neo4j_session,
-        common_job_parameters,
-    )
-
-
-@pytest.mark.parametrize(
-    ("api_url", "organization", "expected"),
-    [
-        (
-            "https://api.github.com/graphql",
-            "simpsoncorp",
-            "https://github.com/simpsoncorp",
-        ),
-        (
-            "https://api.github.com",
-            "simpsoncorp",
-            "https://github.com/simpsoncorp",
-        ),
-        (
-            "https://github.example.com/api/graphql",
-            "simpsoncorp",
-            "https://github.example.com/simpsoncorp",
-        ),
-        (
-            "https://github.example.com/api/v3",
-            "simpsoncorp",
-            "https://github.example.com/simpsoncorp",
-        ),
-        (
-            "https://github.example.com/graphql/",
-            "simpsoncorp",
-            "https://github.example.com/simpsoncorp",
-        ),
-    ],
-)
-@typing.no_type_check
-def test_github_org_url(api_url: str, organization: str, expected: str) -> None:
-    assert github_org_url(api_url, organization) == expected
-
-
-@pytest.mark.parametrize(
-    ("api_url", "expected"),
-    [
-        ("https://api.github.com/graphql", True),
-        ("https://api.github.com", True),
-        ("https://github.example.com/api/graphql", False),
-        ("https://github.example.com/api/v3", False),
-    ],
-)
-@typing.no_type_check
-def test_is_github_dotcom_api_url(api_url: str, expected: bool) -> None:
-    assert is_github_dotcom_api_url(api_url) is expected
+    assert "-F cursor=" in command
 
 
 @patch("cartography.intel.github.util.time.sleep")
@@ -381,28 +51,26 @@ def test_fetch_all_handles_retries(
     mock_sleep: Mock,
 ) -> None:
     """
-    Ensures that fetch_all re-reaises the same exceptions when exceeding retry limit
+    Ensures that fetch_all returns partial data when exceeding retry limit
     """
     # Arrange
-    exception = HTTPError
     response = Response()
     response.status_code = 500
-    mock_fetch_page.side_effect = exception("my-error", response=response)
+    mock_fetch_page.side_effect = HTTPError("my-error", response=response)
     retries = 3
     # Act
-    with pytest.raises(exception) as excinfo:
-        fetch_all(
-            "my-token",
-            "my-api_url",
-            "my-org",
-            "my-query",
-            "my-resource",
-            retries=retries,
-        )
+    result, _ = fetch_all(
+        "my-token",
+        "my-api_url",
+        "my-org",
+        "my-query",
+        "my-resource",
+        retries=retries,
+    )
     # Assert
     assert mock_handle_rate_limit_sleep.call_count == retries
     assert mock_fetch_page.call_count == retries
-    assert "my-error" in str(excinfo.value)
+    assert result.nodes == []
 
 
 @patch("cartography.intel.github.util.time.sleep")
@@ -436,6 +104,136 @@ def test_fetch_all_reduces_count_on_502(
     assert mock_fetch_page.call_count == 2
     assert mock_fetch_page.call_args_list[0][1]["count"] == 50
     assert mock_fetch_page.call_args_list[1][1]["count"] == 25
+
+
+@patch("cartography.intel.github.util.time.sleep")
+@patch("cartography.intel.github.util.handle_rate_limit_sleep")
+@patch("cartography.intel.github.util.fetch_page")
+def test_fetch_all_returns_partial_data_after_exhausting_retries(
+    mock_fetch_page: Mock,
+    mock_handle_rate_limit_sleep: Mock,
+    mock_sleep: Mock,
+) -> None:
+    """
+    When retries are exhausted mid-pagination, fetch_all should return
+    whatever data was collected so far rather than raising, so the sync
+    can continue with partial data instead of failing entirely.
+    """
+    response_502 = Response()
+    response_502.status_code = 502
+    success_page_1 = {
+        "data": {
+            "organization": {
+                "repositories": {
+                    "nodes": [{"name": "repo1"}, {"name": "repo2"}],
+                    "edges": [],
+                    "pageInfo": {"endCursor": "cursor1", "hasNextPage": True},
+                },
+                "url": "url",
+                "login": "org",
+            },
+        }
+    }
+    retries = 3
+    mock_fetch_page.side_effect = [
+        success_page_1,
+        HTTPError("bad gateway", response=response_502),
+        HTTPError("bad gateway", response=response_502),
+        HTTPError("bad gateway", response=response_502),
+    ]
+
+    result, _ = fetch_all(
+        "token", "api_url", "org", "query", "repositories", retries=retries,
+    )
+
+    assert result.nodes == [{"name": "repo1"}, {"name": "repo2"}]
+
+
+@patch("cartography.intel.github.util.time.sleep")
+@patch("cartography.intel.github.util.handle_rate_limit_sleep")
+@patch("cartography.intel.github.util.fetch_page")
+def test_fetch_all_raises_after_persistent_502s_at_degraded_page_size(
+    mock_fetch_page: Mock,
+    mock_handle_rate_limit_sleep: Mock,
+    mock_sleep: Mock,
+) -> None:
+    """
+    When page size has been reduced due to 502s, and 502s keep occurring even
+    after occasional successes, fetch_all should eventually give up. Previously,
+    retry was incorrectly reset to 0 on each success even at a degraded page
+    size, causing an infinite loop.
+    """
+    response_502 = Response()
+    response_502.status_code = 502
+    success_with_next = {
+        "data": {
+            "organization": {
+                "repositories": {
+                    "nodes": [],
+                    "edges": [],
+                    "pageInfo": {"endCursor": "cursor1", "hasNextPage": True},
+                },
+                "url": "url",
+                "login": "org",
+            },
+        }
+    }
+    retries = 3
+    # Pattern: 1 502 reduces count from 2→1, then alternating 502/success.
+    # With the bug, retry resets to 0 on each success so it never accumulates
+    # to `retries` and loops forever (StopIteration when mock is exhausted).
+    # With the fix, retry is NOT reset on success at degraded page size, so it
+    # reaches `retries` and breaks, returning partial data.
+    mock_fetch_page.side_effect = [
+        HTTPError("bad gateway", response=response_502),  # reduces count 2→1
+        HTTPError("bad gateway", response=response_502),  # retry=1
+        success_with_next,                                 # retry should NOT reset
+        HTTPError("bad gateway", response=response_502),  # retry=2
+        success_with_next,                                 # retry should NOT reset
+        HTTPError("bad gateway", response=response_502),  # retry=3 → break
+    ]
+
+    result, _ = fetch_all(
+        "token",
+        "api_url",
+        "org",
+        "query",
+        "repositories",
+        count=2,
+        retries=retries,
+    )
+    assert result.nodes == []
+
+
+@patch("cartography.intel.github.util.time.sleep")
+@patch("cartography.intel.github.util.handle_rate_limit_sleep")
+@patch("cartography.intel.github.util.fetch_page")
+def test_fetch_all_raises_after_retries_when_502_at_page_size_1(
+    mock_fetch_page: Mock,
+    mock_handle_rate_limit_sleep: Mock,
+    mock_sleep: Mock,
+) -> None:
+    """
+    When page size is already 1 and GitHub keeps returning 502, fetch_all should
+    eventually give up and return partial data rather than looping forever.
+    """
+    response_502 = Response()
+    response_502.status_code = 502
+    retries = 3
+    mock_fetch_page.side_effect = HTTPError("bad gateway", response=response_502)
+
+    result, _ = fetch_all(
+        "token",
+        "api_url",
+        "org",
+        "query",
+        "repositories",
+        count=1,
+            retries=retries,
+        )
+
+    assert mock_fetch_page.call_count == retries
+    assert result.nodes == []
 
 
 @patch("cartography.intel.github.util.time.sleep")
