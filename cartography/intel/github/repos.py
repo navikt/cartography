@@ -528,6 +528,8 @@ def _get_dep_manifests_for_repos(
     result: dict[str, dict[str, Any]] = {}
     failed_count = 0
     cleanup_safe = True
+    processed_repos = 0
+    total_repos = sum(1 for repo in repo_raw_data if repo is not None)
 
     for repo in repo_raw_data:
         if repo is None:
@@ -542,6 +544,15 @@ def _get_dep_manifests_for_repos(
                 repo_name,
             )
             continue
+        processed_repos += 1
+        if processed_repos == 1 or processed_repos % 100 == 0:
+            logger.info(
+                "Dependency manifest progress for org %s: repo %d/%d (%s)",
+                org,
+                processed_repos,
+                total_repos,
+                repo_name,
+            )
 
         try:
             manifests, repo_cleanup_safe = _get_repo_dep_manifests(
