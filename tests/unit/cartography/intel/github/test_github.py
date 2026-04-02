@@ -13,6 +13,7 @@ from requests.exceptions import HTTPError
 
 from cartography.intel.github.util import _GRAPHQL_RATE_LIMIT_REMAINING_THRESHOLD
 from cartography.intel.github.util import _build_gh_graphql_replay_command
+from cartography.intel.github.util import call_github_api
 from cartography.intel.github.util import fetch_all
 from cartography.intel.github.util import fetch_all_rest_api_pages
 from cartography.intel.github.util import handle_rate_limit_sleep
@@ -40,6 +41,33 @@ def test_build_gh_graphql_replay_command_with_null_cursor() -> None:
         count=50,
     )
     assert "-F cursor=" in command
+
+
+@patch("cartography.intel.github.util.logger")
+@patch("cartography.intel.github.util.requests.post")
+def test_call_github_api_logs_replay_command_on_graphql_errors(
+    mock_post: Mock,
+    mock_logger: Mock,
+) -> None:
+    mock_response = Mock()
+    mock_response.raise_for_status = Mock()
+    mock_response.json.return_value = {
+        "data": {},
+        "errors": [{"message": "Resource not accessible by integration"}],
+    }
+    mock_post.return_value = mock_response
+
+    call_github_api(
+        "query($login: String!, $cursor: String, $count: Int!) { viewer { login } }",
+        '{"login": "navikt", "cursor": "abc123", "count": 25}',
+        "token",
+        "https://api.github.com/graphql",
+    )
+
+    warning_call = mock_logger.warning.call_args
+    assert warning_call is not None
+    assert "replay locally with:" in warning_call.args[0]
+    assert "gh api graphql" in warning_call.args[2]
 
 
 @patch("cartography.intel.github.util.time.sleep")

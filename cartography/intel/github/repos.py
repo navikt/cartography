@@ -469,14 +469,25 @@ def _get_dep_manifests_for_repos(
         org,
     )
     result: dict[str, dict[str, Any]] = {}
+    processed_repos = 0
+    total_repos = sum(1 for repo in repo_raw_data if repo is not None)
 
     for repo in repo_raw_data:
         if repo is None:
             continue
+        processed_repos += 1
         repo_name = repo.get("name")
         repo_url = repo.get("url")
         if not repo_name or not repo_url:
             continue
+        if processed_repos == 1 or processed_repos % 100 == 0:
+            logger.info(
+                "Dependency manifest progress for org %s: repo %d/%d (%s)",
+                org,
+                processed_repos,
+                total_repos,
+                repo_name,
+            )
         if skip_archived_repos and repo.get("isArchived"):
             logger.debug(
                 "Skipping dependency manifest fetch for archived repo %s.",

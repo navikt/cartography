@@ -186,9 +186,27 @@ def call_github_api(query: str, variables: str, token: str, api_url: str) -> dic
     response.raise_for_status()
     response_json = response.json()
     if "errors" in response_json:
+        replay_command = None
+        try:
+            parsed_variables = json.loads(variables)
+            if isinstance(parsed_variables, dict):
+                replay_command = _build_gh_graphql_replay_command(
+                    query,
+                    str(parsed_variables.get("login", "")),
+                    parsed_variables.get("cursor"),
+                    **{
+                        key: value
+                        for key, value in parsed_variables.items()
+                        if key not in {"login", "cursor"}
+                    },
+                )
+        except (TypeError, ValueError):
+            replay_command = None
         logger.warning(
-            f'call_github_api() response has errors, please investigate. Raw response: {response_json["errors"]}; '
-            f"continuing sync.",
+            "call_github_api() response has errors, please investigate. Raw response: %s; "
+            "replay locally with: %s; continuing sync.",
+            response_json["errors"],
+            replay_command,
         )
     return response_json  # type: ignore
 
@@ -257,6 +275,7 @@ def fetch_all(
     retry = 0
     null_resource_retry = 0
     original_count = kwargs.get("count")
+    page_number = 0
 
     while has_next_page:
         exc: Any = None
@@ -381,6 +400,20 @@ def fetch_all(
         # Allow for paginating both nodes and edges fields of the GitHub GQL structure.
         data.nodes.extend(resource.get("nodes", []))
         data.edges.extend(resource.get("edges", []))
+        page_number += 1
+        logger.info(
+            "GitHub: fetched page %d for resource `%s` in org `%s` (page_nodes=%d total_nodes=%d page_edges=%d total_edges=%d count=%s cursor=%s has_next=%s)",
+            page_number,
+            resource_type,
+            organization,
+            len(resource.get("nodes", [])),
+            len(data.nodes),
+            len(resource.get("edges", [])),
+            len(data.edges),
+            kwargs.get("count"),
+            resource.get("pageInfo", {}).get("endCursor"),
+            resource.get("pageInfo", {}).get("hasNextPage"),
+        )
 
         cursor = resource["pageInfo"]["endCursor"]
         has_next_page = resource["pageInfo"]["hasNextPage"]
