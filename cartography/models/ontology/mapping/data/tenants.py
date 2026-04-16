@@ -108,7 +108,7 @@ digitalocean_mapping = OntologyMapping(
 
 # Entra (formerly Azure AD)
 entra_mapping = OntologyMapping(
-    module_name="entra",
+    module_name="microsoft",
     nodes=[
         OntologyNodeMapping(
             node_label="EntraTenant",
@@ -363,6 +363,23 @@ jumpcloud_mapping = OntologyMapping(
 # Tailscale
 # TailscaleTailnet: No field to map in TailscaleTailnet (minimal properties)
 
+# WorkOS Tenant mapping
+workos_tenants_mapping = OntologyMapping(
+    module_name="workos",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="WorkOSOrganization",
+            fields=[
+                OntologyFieldMapping(
+                    ontology_field="name", node_field="name", required=True
+                ),
+                # status: Not available
+                # domain: Available via WorkOSOrganizationDomain relationship
+            ],
+        ),
+    ],
+)
+
 
 # SubImage: No field to map in SubImageTenant (minimal properties beyond id)
 
@@ -372,7 +389,7 @@ TENANTS_ONTOLOGY_MAPPING: dict[str, OntologyMapping] = {
     "azure": azure_mapping,
     "cloudflare": cloudflare_mapping,
     "digitalocean": digitalocean_mapping,
-    "entra": entra_mapping,
+    "microsoft": entra_mapping,
     "gcp": gcp_mapping,
     "github": github_mapping,
     "googleworkspace": googleworkspace_mapping,
@@ -385,4 +402,5 @@ TENANTS_ONTOLOGY_MAPPING: dict[str, OntologyMapping] = {
     "jumpcloud": jumpcloud_mapping,
     "slack": slack_mapping,
     "spacelift": spacelift_mapping,
+    "workos": workos_tenants_mapping,
 }
