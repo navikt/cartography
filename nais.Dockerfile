@@ -6,7 +6,8 @@ WORKDIR /app
 ENV HOME=/app
 COPY --chown=1069:1069 . /app/src
 USER 1069
-RUN uv tool install /app/src
+RUN uv export --frozen --no-dev --no-emit-project -o /app/constraints.txt --directory /app/src && \
+    uv tool install --with-requirements /app/constraints.txt /app/src
 
 FROM europe-north1-docker.pkg.dev/cgr-nav/pull-through/nav.no/python:3.13-dev AS production
 USER root
