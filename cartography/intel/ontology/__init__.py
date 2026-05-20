@@ -3,6 +3,7 @@ import logging
 import neo4j
 
 import cartography.intel.ontology.devices
+import cartography.intel.ontology.dnsrecords
 import cartography.intel.ontology.loadbalancers
 import cartography.intel.ontology.packages
 import cartography.intel.ontology.publicips
@@ -46,6 +47,11 @@ def run(neo4j_session: neo4j.Session, config: Config) -> None:
         config.update_tag,
         common_job_parameters,
     )
+    cartography.intel.ontology.dnsrecords.sync(
+        neo4j_session,
+        config.update_tag,
+        common_job_parameters,
+    )
     cartography.intel.ontology.loadbalancers.sync(
         neo4j_session,
         config.update_tag,
@@ -65,6 +71,13 @@ def run(neo4j_session: neo4j.Session, config: Config) -> None:
     # Runs last so the :Container / :Image semantic labels and HAS_IMAGE edges from every provider are in place.
     run_analysis_job(
         "resolved_image_analysis.json",
+        neo4j_session,
+        common_job_parameters,
+    )
+    # Create RUNS_ON shortcut edges from :AIBOMSource to :Container by joining through the shared :Image.
+    # Runs after resolved_image_analysis so all semantic labels and HAS_IMAGE edges are in place.
+    run_analysis_job(
+        "aibom_runs_on_container_analysis.json",
         neo4j_session,
         common_job_parameters,
     )
