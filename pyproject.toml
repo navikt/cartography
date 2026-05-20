@@ -107,6 +107,7 @@ dependencies = [
     "azure-synapse-artifacts>=0.17.0",
     "slack-sdk>=3.37.0",
     "workos>=6.0.5",
+    "python-json-logger>=2.0.0",
 ]
 # Comes from Git tag
 dynamic = [ "version" ]
