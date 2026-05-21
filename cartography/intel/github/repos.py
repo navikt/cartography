@@ -48,6 +48,7 @@ from cartography.models.github.rulesets import GitHubRulesetSchema
 from cartography.util import retries_with_backoff
 from cartography.util import run_analysis_job
 from cartography.util import timeit
+from cartography.config import GitHubSyncOptions
 
 logger = logging.getLogger(__name__)
 
@@ -2221,6 +2222,7 @@ def sync(
     github_url: str,
     organization: str,
     github_skip_archived_repo_manifests: bool = False,
+    sync_options: "GitHubSyncOptions | None" = None,
 ) -> None:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -2237,7 +2239,9 @@ def sync(
 
     privileged_repo_data_by_url: dict[str, dict[str, Any]] = {}
     rulesets_cleanup_safe = True
-    if _repos_need_privileged_details(repos_json):
+    if _repos_need_privileged_details(repos_json) and (
+        sync_options is None or sync_options.repo_privileged_details
+    ):
         try:
             privileged_repo_data_by_url = get_repo_privileged_details_by_url(
                 github_api_key,
@@ -2269,39 +2273,41 @@ def sync(
 
     direct_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
     outside_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
-    try:
-        direct_collabs = _get_repo_collaborators_for_multiple_repos(
-            repos_json,
-            "DIRECT",
-            organization,
-            github_url,
-            github_api_key,
-        )
-        outside_collabs = _get_repo_collaborators_for_multiple_repos(
-            repos_json,
-            "OUTSIDE",
-            organization,
-            github_url,
-            github_api_key,
-        )
-    except TypeError:
-        # due to permission errors or transient network error or some other nonsense
-        logger.warning(
-            "Unable to list repo collaborators due to permission errors; continuing on.",
-            exc_info=True,
-        )
+    if sync_options is None or sync_options.repo_collaborators:
+        try:
+            direct_collabs = _get_repo_collaborators_for_multiple_repos(
+                repos_json,
+                "DIRECT",
+                organization,
+                github_url,
+                github_api_key,
+            )
+            outside_collabs = _get_repo_collaborators_for_multiple_repos(
+                repos_json,
+                "OUTSIDE",
+                organization,
+                github_url,
+                github_api_key,
+            )
+        except TypeError:
+            # due to permission errors or transient network error or some other nonsense
+            logger.warning(
+                "Unable to list repo collaborators due to permission errors; continuing on.",
+                exc_info=True,
+            )
 
     # Fetch dependency graph manifests per-repo to avoid 502s from heavy inline queries
-    dep_manifests_by_url = _get_dep_manifests_for_repos(
-        repos_json,
-        organization,
-        github_url,
-        github_api_key,
-        skip_archived_repos=github_skip_archived_repo_manifests,
-    )
-    for repo in repos_json:
-        if repo is not None and repo.get("url") in dep_manifests_by_url:
-            repo["dependencyGraphManifests"] = dep_manifests_by_url[repo["url"]]
+    if sync_options is None or sync_options.repo_dependency_manifests:
+        dep_manifests_by_url = _get_dep_manifests_for_repos(
+            repos_json,
+            organization,
+            github_url,
+            github_api_key,
+            skip_archived_repos=github_skip_archived_repo_manifests,
+        )
+        for repo in repos_json:
+            if repo is not None and repo.get("url") in dep_manifests_by_url:
+                repo["dependencyGraphManifests"] = dep_manifests_by_url[repo["url"]]
 
     repo_data = transform(repos_json, direct_collabs, outside_collabs)
     load(neo4j_session, common_job_parameters, repo_data)
