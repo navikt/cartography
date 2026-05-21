@@ -41,7 +41,13 @@ def test_transform_deployments():
 
     d = next(dep for dep in deployments if dep["id"] == "deploy-1")
     assert d["repository"] == "navikt/my-app"
+    assert d["repository_url"] == "https://github.com/navikt/my-app"
     assert d["commit_sha"] == "abc123def456"
+
+    # Null repository should produce null repository_url (no match attempted)
+    d2 = next(dep for dep in deployments if dep["id"] == "deploy-2")
+    assert d2["repository"] is None
+    assert d2["repository_url"] is None
 
 
 def test_load_nais_workloads(neo4j_session):

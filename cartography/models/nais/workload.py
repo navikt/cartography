@@ -130,7 +130,9 @@ class NaisDeploymentToTenantRel(CartographyRelSchema):
     )
     direction: LinkDirection = LinkDirection.INWARD
     rel_label: str = "RESOURCE"
-    properties: NaisDeploymentToTenantRelProperties = NaisDeploymentToTenantRelProperties()
+    properties: NaisDeploymentToTenantRelProperties = (
+        NaisDeploymentToTenantRelProperties()
+    )
 
 
 @dataclass(frozen=True)
@@ -157,11 +159,11 @@ class NaisDeploymentToGitHubRepoRelProperties(CartographyRelProperties):
 
 @dataclass(frozen=True)
 # (:NaisDeployment)-[:DEPLOYED_FROM]->(:GitHubRepository)
-# Matched via deployment.repository = "navikt/my-app" against GitHubRepository.name
+# Matched via deployment.repository_url = "https://github.com/navikt/my-app" against GitHubRepository.id
 class NaisDeploymentToGitHubRepoRel(CartographyRelSchema):
     target_node_label: str = "GitHubRepository"
     target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
-        {"name": PropertyRef("repository")},
+        {"id": PropertyRef("repository_url")},
     )
     direction: LinkDirection = LinkDirection.OUTWARD
     rel_label: str = "DEPLOYED_FROM"

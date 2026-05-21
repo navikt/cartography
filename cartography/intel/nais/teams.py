@@ -4,6 +4,7 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import run_write_query
 from cartography.graph.job import GraphJob
 from cartography.intel.nais.client import NaisGraphQLClient
 from cartography.models.nais.team import NaisMemberSchema
@@ -136,7 +137,8 @@ def load_team_member_relationships(
     update_tag: int,
 ) -> None:
     """Write HAS_MEMBER edges from each team to its members."""
-    neo4j_session.run(
+    run_write_query(
+        neo4j_session,
         """
         UNWIND $teams AS team
         MATCH (t:NaisTeam {id: team.id})
@@ -156,8 +158,12 @@ def cleanup(
     neo4j_session: neo4j.Session,
     common_job_parameters: dict[str, Any],
 ) -> None:
-    GraphJob.from_node_schema(NaisTeamSchema(), common_job_parameters).run(neo4j_session)
-    GraphJob.from_node_schema(NaisMemberSchema(), common_job_parameters).run(neo4j_session)
+    GraphJob.from_node_schema(NaisTeamSchema(), common_job_parameters).run(
+        neo4j_session
+    )
+    GraphJob.from_node_schema(NaisMemberSchema(), common_job_parameters).run(
+        neo4j_session
+    )
 
 
 @timeit
@@ -172,7 +178,11 @@ def sync(
     logger.info("Syncing NAIS teams and members")
     raw = _teams_raw if _teams_raw is not None else get(client)
     teams, members = transform(raw)
+    logger.info(
+        "NAIS teams: fetched %d teams, %d unique members", len(teams), len(members)
+    )
     load_members(neo4j_session, members, tenant_id, update_tag)
     load_teams(neo4j_session, teams, tenant_id, update_tag)
     load_team_member_relationships(neo4j_session, teams, update_tag)
     cleanup(neo4j_session, common_job_parameters)
+    logger.info("NAIS teams sync complete")

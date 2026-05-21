@@ -3,12 +3,18 @@ Minimal GraphQL client for the NAIS API.
 
 Handles authenticated POST requests and cursor-based pagination.
 """
+
 import logging
 from typing import Any
 
+import backoff
 import requests
 
+from cartography.util import backoff_handler
+
 logger = logging.getLogger(__name__)
+
+_MAX_TRIES = 4  # 1 initial + 3 retries (~1s, ~2s, ~4s backoff)
 
 
 class NaisGraphQLClient:
@@ -22,8 +28,16 @@ class NaisGraphQLClient:
             }
         )
 
-    def query(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
-        """Execute a GraphQL query and return the parsed JSON response."""
+    def query(
+        self, query: str, variables: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """
+        Execute a GraphQL query and return the parsed JSON response.
+
+        GraphQL errors in the response are logged as warnings and an empty dict
+        is returned so the caller can continue rather than aborting the sync.
+        HTTP errors are raised and will be retried by paginate().
+        """
         payload: dict[str, Any] = {"query": query}
         if variables:
             payload["variables"] = variables
@@ -33,7 +47,11 @@ class NaisGraphQLClient:
         result = response.json()
 
         if "errors" in result:
-            raise RuntimeError(f"NAIS GraphQL errors: {result['errors']}")
+            logger.warning(
+                "NAIS GraphQL returned errors; continuing sync. errors=%s",
+                result["errors"],
+            )
+            return {}
 
         return result.get("data", {})
 
@@ -47,6 +65,8 @@ class NaisGraphQLClient:
         """
         Collect all nodes from a paginated connection.
 
+        Each page request is retried with exponential backoff on HTTP errors.
+
         :param query: GraphQL query string. Must include $cursor and $first variables,
                       and expose pageInfo { hasNextPage endCursor } at the connection root.
         :param data_path: List of keys to drill into the response data to reach the connection
@@ -59,16 +79,44 @@ class NaisGraphQLClient:
         variables.setdefault("cursor", None)
 
         nodes: list[Any] = []
+        page = 0
+
+        @backoff.on_exception(
+            backoff.expo,
+            requests.exceptions.RequestException,
+            max_tries=_MAX_TRIES,
+            on_backoff=backoff_handler,
+        )
+        def _fetch_page() -> dict[str, Any]:
+            return self.query(query, variables)
 
         while True:
-            data = self.query(query, variables)
+            page += 1
+            data = _fetch_page()
+
+            if not data:
+                # query() returned {} due to GraphQL errors — log and stop pagination
+                logger.warning(
+                    "NAIS paginate: empty response on page %d for path %s; stopping pagination.",
+                    page,
+                    data_path,
+                )
+                break
 
             # Drill down to the connection object
             connection: Any = data
             for key in data_path:
-                connection = connection[key]
+                connection = connection.get(key) or {}
 
-            nodes.extend(connection.get("nodes", []))
+            batch = connection.get("nodes", [])
+            nodes.extend(batch)
+            logger.debug(
+                "NAIS paginate: path=%s page=%d fetched=%d total=%d",
+                data_path,
+                page,
+                len(batch),
+                len(nodes),
+            )
 
             page_info = connection.get("pageInfo", {})
             if not page_info.get("hasNextPage"):

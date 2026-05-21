@@ -41,6 +41,8 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         )
         return
 
+    logger.info("Starting NAIS sync")
+
     tenant_id = config.nais_base_url
     common_job_parameters: dict[str, Any] = {
         "UPDATE_TAG": config.update_tag,
@@ -84,3 +86,5 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
                 neo4j_session,
                 common_job_parameters,
             )
+
+    logger.info("Completed NAIS sync")

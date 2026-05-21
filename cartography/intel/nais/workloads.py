@@ -83,15 +83,25 @@ def get_environments(client: NaisGraphQLClient) -> list[str]:
 
 def get_workloads(client: NaisGraphQLClient) -> list[dict[str, Any]]:
     environments = get_environments(client)
+    logger.info(
+        "NAIS workloads: fetching workloads for %d environments", len(environments)
+    )
     workloads = []
-    for env in environments:
-        logger.debug("Fetching NAIS workloads for environment %s", env)
+    for idx, env in enumerate(environments, start=1):
         results = client.paginate(
             WORKLOADS_QUERY,
             ["environment", "workloads"],
             variables={"env": env},
         )
         workloads.extend(results)
+        logger.info(
+            "NAIS workloads: environment %d/%d '%s' — %d workloads (total so far: %d)",
+            idx,
+            len(environments),
+            env,
+            len(results),
+            len(workloads),
+        )
     return workloads
 
 
@@ -126,19 +136,23 @@ def transform_workloads(raw: list[dict[str, Any]]) -> list[dict]:
 
 
 def transform_deployments(raw: list[dict[str, Any]]) -> list[dict]:
-    return [
-        {
-            "id": d["id"],
-            "created_at": d.get("createdAt"),
-            "team_slug": d.get("teamSlug"),
-            "environment_name": d.get("environmentName"),
-            "repository": d.get("repository"),
-            "deployer_username": d.get("deployerUsername"),
-            "commit_sha": d.get("commitSha"),
-            "trigger_url": d.get("triggerUrl"),
-        }
-        for d in raw
-    ]
+    result = []
+    for d in raw:
+        repo = d.get("repository")
+        result.append(
+            {
+                "id": d["id"],
+                "created_at": d.get("createdAt"),
+                "team_slug": d.get("teamSlug"),
+                "environment_name": d.get("environmentName"),
+                "repository": repo,
+                "repository_url": f"https://github.com/{repo}" if repo else None,
+                "deployer_username": d.get("deployerUsername"),
+                "commit_sha": d.get("commitSha"),
+                "trigger_url": d.get("triggerUrl"),
+            }
+        )
+    return result
 
 
 @timeit
@@ -179,7 +193,9 @@ def cleanup(
     common_job_parameters: dict[str, Any],
 ) -> None:
     GraphJob.from_node_schema(NaisAppSchema(), common_job_parameters).run(neo4j_session)
-    GraphJob.from_node_schema(NaisDeploymentSchema(), common_job_parameters).run(neo4j_session)
+    GraphJob.from_node_schema(NaisDeploymentSchema(), common_job_parameters).run(
+        neo4j_session
+    )
 
 
 @timeit
@@ -193,13 +209,20 @@ def sync(
     _deployments_raw: list[dict[str, Any]] | None = None,
 ) -> None:
     logger.info("Syncing NAIS workloads")
-    raw_workloads = _workloads_raw if _workloads_raw is not None else get_workloads(client)
+    raw_workloads = (
+        _workloads_raw if _workloads_raw is not None else get_workloads(client)
+    )
     apps = transform_workloads(raw_workloads)
+    logger.info("NAIS workloads: %d workloads to load", len(apps))
     load_apps(neo4j_session, apps, tenant_id, update_tag)
 
     logger.info("Syncing NAIS deployments")
-    raw_deployments = _deployments_raw if _deployments_raw is not None else get_deployments(client)
+    raw_deployments = (
+        _deployments_raw if _deployments_raw is not None else get_deployments(client)
+    )
     deployments = transform_deployments(raw_deployments)
+    logger.info("NAIS deployments: %d deployments to load", len(deployments))
     load_deployments(neo4j_session, deployments, tenant_id, update_tag)
 
     cleanup(neo4j_session, common_job_parameters)
+    logger.info("NAIS workloads sync complete")
