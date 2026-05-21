@@ -521,16 +521,30 @@ def _get_dep_manifests_for_repos(
     :return: A tuple of repo URL to dependencyGraphManifests structure and
         whether manifest cleanup is safe.
     """
-    logger.info(
-        "Fetching dependency graph manifests for %d repos in org %s.",
-        len(repo_raw_data),
-        org,
-    )
+    non_null_repos = [repo for repo in repo_raw_data if repo is not None]
+    total_repos = len(non_null_repos)
+
+    if skip_archived_repos:
+        archived_count = sum(1 for repo in non_null_repos if repo.get("isArchived"))
+        logger.info(
+            "Fetching dependency graph manifests for org %s: %d total repos, "
+            "skipping %d archived, fetching for %d.",
+            org,
+            total_repos,
+            archived_count,
+            total_repos - archived_count,
+        )
+    else:
+        logger.info(
+            "Fetching dependency graph manifests for %d repos in org %s.",
+            total_repos,
+            org,
+        )
+
     result: dict[str, dict[str, Any]] = {}
     failed_count = 0
     cleanup_safe = True
     processed_repos = 0
-    total_repos = sum(1 for repo in repo_raw_data if repo is not None)
 
     for repo in repo_raw_data:
         if repo is None:
