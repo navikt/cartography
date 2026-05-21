@@ -21,6 +21,7 @@ import cartography.intel.github.teams
 import cartography.intel.github.users
 from cartography.client.core.tx import read_list_of_values_tx
 from cartography.config import Config
+from cartography.config import GitHubSyncOptions
 from cartography.intel.github.app_auth import make_credential
 from cartography.util import timeit
 
@@ -104,6 +105,7 @@ def start_github_ingestion(
         "UPDATE_TAG": config.update_tag,
     }
     processed_any_org = False
+    opts: GitHubSyncOptions = config.github_sync_options
 
     # run sync for the provided github organizations
     for auth_data in auth_tokens["organization"]:
@@ -114,42 +116,53 @@ def start_github_ingestion(
         # credential is a GitHubCredential (duck-typed as str by _resolve_token in util.py)
         token: Any = credential
 
-        github_users = cartography.intel.github.users.sync(
-            neo4j_session,
-            common_job_parameters,
-            token,
-            api_url,
-            org_name,
+        github_users = []
+        if opts.users:
+            github_users = cartography.intel.github.users.sync(
+                neo4j_session,
+                common_job_parameters,
+                token,
+                api_url,
+                org_name,
+            )
+        repo_sync_result = cartography.intel.github.repos.GitHubRepoSyncResult(
+            repos=[], manifests=[], manifests_cleanup_safe=True,
         )
-        repo_sync_result = cartography.intel.github.repos.sync(
-            neo4j_session,
-            common_job_parameters,
-            token,
-            api_url,
-            org_name,
-            config.github_skip_archived_repo_manifests,
-        )
-        cartography.intel.github.personal_access_tokens.sync(
-            neo4j_session,
-            common_job_parameters,
-            token,
-            api_url,
-            org_name,
-        )
-        cartography.intel.github.dependabot_alerts.sync(
-            neo4j_session,
-            common_job_parameters,
-            token,
-            api_url,
-            org_name,
-        )
-        github_teams = cartography.intel.github.teams.sync_github_teams(
-            neo4j_session,
-            common_job_parameters,
-            token,
-            api_url,
-            org_name,
-        )
+        if opts.repos:
+            repo_sync_result = cartography.intel.github.repos.sync(
+                neo4j_session,
+                common_job_parameters,
+                token,
+                api_url,
+                org_name,
+                config.github_skip_archived_repo_manifests,
+                sync_options=opts,
+            )
+        if opts.personal_access_tokens:
+            cartography.intel.github.personal_access_tokens.sync(
+                neo4j_session,
+                common_job_parameters,
+                token,
+                api_url,
+                org_name,
+            )
+        if opts.dependabot_alerts:
+            cartography.intel.github.dependabot_alerts.sync(
+                neo4j_session,
+                common_job_parameters,
+                token,
+                api_url,
+                org_name,
+            )
+        github_teams: list[Any] = []
+        if opts.teams:
+            github_teams = cartography.intel.github.teams.sync_github_teams(
+                neo4j_session,
+                common_job_parameters,
+                token,
+                api_url,
+                org_name,
+            )
         cartography.intel.github.codeowners.sync(
             neo4j_session,
             common_job_parameters,
@@ -164,27 +177,30 @@ def start_github_ingestion(
         )
 
         # Sync GitHub Actions (workflows, secrets, variables, environments)
-        all_workflows = cartography.intel.github.actions.sync(
-            neo4j_session,
-            common_job_parameters,
-            token,
-            api_url,
-            org_name,
-        )
+        all_workflows: list[Any] = []
+        if opts.actions:
+            all_workflows = cartography.intel.github.actions.sync(
+                neo4j_session,
+                common_job_parameters,
+                token,
+                api_url,
+                org_name,
+            )
 
         # Sync commit relationships for the configured lookback period
         # Get repo names from the graph instead of making another API call
-        repo_names = _get_repos_from_graph(neo4j_session, org_name)
+        if opts.commits:
+            repo_names = _get_repos_from_graph(neo4j_session, org_name)
 
-        cartography.intel.github.commits.sync_github_commits(
-            neo4j_session,
-            token,
-            api_url,
-            org_name,
-            repo_names,
-            common_job_parameters["UPDATE_TAG"],
-            config.github_commit_lookback_days,
-        )
+            cartography.intel.github.commits.sync_github_commits(
+                neo4j_session,
+                token,
+                api_url,
+                org_name,
+                repo_names,
+                common_job_parameters["UPDATE_TAG"],
+                config.github_commit_lookback_days,
+            )
 
         repos_json = cartography.intel.github.repos.get(
             token,
@@ -201,48 +217,49 @@ def start_github_ingestion(
         # tags, and attestations reaped. An endpoint outage or missing-scope
         # condition flips cleanup_safe to False, which disables both the
         # fetches and the downstream cleanups.
-        ghcr_result = cartography.intel.github.packages.sync_packages(
-            neo4j_session,
-            token,
-            api_url,
-            org_name,
-            common_job_parameters["UPDATE_TAG"],
-            common_job_parameters,
-        )
-        if ghcr_result.cleanup_safe:
-            (
-                ghcr_manifests,
-                _ghcr_manifest_lists,
-                ghcr_tag_rows,
-                ghcr_observed_and_skipped,
-            ) = cartography.intel.github.container_images.sync_container_images(
+        if opts.packages:
+            ghcr_result = cartography.intel.github.packages.sync_packages(
                 neo4j_session,
                 token,
                 api_url,
                 org_name,
-                ghcr_result.packages,
                 common_job_parameters["UPDATE_TAG"],
                 common_job_parameters,
             )
-            cartography.intel.github.container_image_tags.sync_container_image_tags(
-                neo4j_session,
-                org_name,
-                ghcr_tag_rows,
-                common_job_parameters["UPDATE_TAG"],
-                common_job_parameters,
-            )
-            cartography.intel.github.container_image_attestations.sync_container_image_attestations(
-                neo4j_session,
-                token,
-                api_url,
-                org_name,
-                ghcr_manifests,
-                common_job_parameters["UPDATE_TAG"],
-                common_job_parameters,
-                additional_observed_digests=ghcr_observed_and_skipped,
-            )
+            if ghcr_result.cleanup_safe:
+                (
+                    ghcr_manifests,
+                    _ghcr_manifest_lists,
+                    ghcr_tag_rows,
+                    ghcr_observed_and_skipped,
+                ) = cartography.intel.github.container_images.sync_container_images(
+                    neo4j_session,
+                    token,
+                    api_url,
+                    org_name,
+                    ghcr_result.packages,
+                    common_job_parameters["UPDATE_TAG"],
+                    common_job_parameters,
+                )
+                cartography.intel.github.container_image_tags.sync_container_image_tags(
+                    neo4j_session,
+                    org_name,
+                    ghcr_tag_rows,
+                    common_job_parameters["UPDATE_TAG"],
+                    common_job_parameters,
+                )
+                cartography.intel.github.container_image_attestations.sync_container_image_attestations(
+                    neo4j_session,
+                    token,
+                    api_url,
+                    org_name,
+                    ghcr_manifests,
+                    common_job_parameters["UPDATE_TAG"],
+                    common_job_parameters,
+                    additional_observed_digests=ghcr_observed_and_skipped,
+                )
 
-        if valid_repos:
+        if opts.supply_chain and valid_repos:
             cartography.intel.github.supply_chain.sync(
                 neo4j_session,
                 token,

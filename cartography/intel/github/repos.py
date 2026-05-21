@@ -22,6 +22,7 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from cartography.client.core.tx import load as load_data
+from cartography.config import GitHubSyncOptions
 from cartography.graph.job import GraphJob
 from cartography.helpers import backoff_handler
 from cartography.intel.github.codeowners import normalize_repo_relative_path
@@ -2573,6 +2574,7 @@ def sync(
     github_url: str,
     organization: str,
     github_skip_archived_repo_manifests: bool = False,
+    sync_options: "GitHubSyncOptions | None" = None,
 ) -> GitHubRepoSyncResult:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -2581,6 +2583,8 @@ def sync(
     :param github_api_key: The API key to access the GitHub v4 API
     :param github_url: The URL for the GitHub v4 endpoint to use
     :param organization: The organization to query GitHub for
+    :param github_skip_archived_repo_manifests: Skip dependency manifest fetch for archived repos.
+    :param sync_options: Fine-grained on/off switches for sub-syncs. None means all enabled.
     :return: Repository and dependency manifest data fetched for this org.
     """
     logger.info("Syncing GitHub repos")
@@ -2589,7 +2593,7 @@ def sync(
 
     privileged_repo_data_by_url: dict[str, dict[str, Any]] = {}
     rulesets_cleanup_safe = True
-    if _repos_need_privileged_details(repos_json):
+    if (sync_options is None or sync_options.repo_privileged_details) and _repos_need_privileged_details(repos_json):
         try:
             privileged_repo_data_by_url = get_repo_privileged_details_by_url(
                 github_api_key,
@@ -2621,36 +2625,41 @@ def sync(
 
     direct_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
     outside_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
-    try:
-        direct_collabs = _get_repo_collaborators_for_multiple_repos(
-            repos_json,
-            "DIRECT",
-            organization,
-            github_url,
-            github_api_key,
-        )
-        outside_collabs = _get_repo_collaborators_for_multiple_repos(
-            repos_json,
-            "OUTSIDE",
-            organization,
-            github_url,
-            github_api_key,
-        )
-    except TypeError:
-        # due to permission errors or transient network error or some other nonsense
-        logger.warning(
-            "Unable to list repo collaborators due to permission errors; continuing on.",
-            exc_info=True,
-        )
+    if sync_options is None or sync_options.repo_collaborators:
+        try:
+            direct_collabs = _get_repo_collaborators_for_multiple_repos(
+                repos_json,
+                "DIRECT",
+                organization,
+                github_url,
+                github_api_key,
+            )
+            outside_collabs = _get_repo_collaborators_for_multiple_repos(
+                repos_json,
+                "OUTSIDE",
+                organization,
+                github_url,
+                github_api_key,
+            )
+        except (TypeError, ValueError):
+            # TypeError: permission errors or transient network issues
+            # ValueError: fetch_all raises this when all retries are exhausted (e.g. repeated timeouts)
+            logger.warning(
+                "Unable to list repo collaborators due to permission errors or exhausted retries; continuing on.",
+                exc_info=True,
+            )
 
     # Fetch dependency graph manifests per-repo to avoid 502s from heavy inline queries
-    dep_manifests_by_url, dep_manifests_cleanup_safe = _get_dep_manifests_for_repos(
-        repos_json,
-        organization,
-        github_url,
-        github_api_key,
-        skip_archived_repos=github_skip_archived_repo_manifests,
-    )
+    dep_manifests_by_url: dict[str, dict[str, Any]] = {}
+    dep_manifests_cleanup_safe = True
+    if sync_options is None or sync_options.repo_dependency_manifests:
+        dep_manifests_by_url, dep_manifests_cleanup_safe = _get_dep_manifests_for_repos(
+            repos_json,
+            organization,
+            github_url,
+            github_api_key,
+            skip_archived_repos=github_skip_archived_repo_manifests,
+        )
     for repo in repos_json:
         if repo is not None and repo.get("url") in dep_manifests_by_url:
             repo["dependencyGraphManifests"] = dep_manifests_by_url[repo["url"]]
