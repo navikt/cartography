@@ -18,12 +18,12 @@ _MAX_TRIES = 4  # 1 initial + 3 retries (~1s, ~2s, ~4s backoff)
 
 
 class NaisGraphQLClient:
-    def __init__(self, api_key: str, base_url: str) -> None:
+    def __init__(self, token: str, base_url: str) -> None:
         self._base_url = base_url.rstrip("/")
         self._session = requests.Session()
         self._session.headers.update(
             {
-                "Authorization": f"Bearer {api_key}",
+                "Authorization": f"Bearer {token}",
                 "Content-Type": "application/json",
             }
         )

@@ -2034,11 +2034,11 @@ class CLI:
             # =================================================================
             # NAIS Options
             # =================================================================
-            nais_api_key_env_var: Annotated[
+            nais_token_path: Annotated[
                 str | None,
                 typer.Option(
-                    "--nais-api-key-env-var",
-                    help="Environment variable name containing the NAIS API key / Bearer token.",
+                    "--nais-token-path",
+                    help="Path to a file containing the NAIS Bearer token (e.g. a mounted service-account token).",
                     rich_help_panel=PANEL_NAIS,
                     hidden=PANEL_NAIS not in visible_panels,
                 ),
@@ -2613,14 +2613,7 @@ class CLI:
                 )
                 workos_api_key = os.environ.get(workos_apikey_env_var)
 
-            # Read NAIS API key
-            nais_api_key = None
-            if nais_api_key_env_var:
-                logger.debug(
-                    "Reading NAIS API key from environment variable %s",
-                    nais_api_key_env_var,
-                )
-                nais_api_key = os.environ.get(nais_api_key_env_var)
+            # NAIS token path is passed through directly to Config
 
             # Build the Config object
             config = Config(
@@ -2632,7 +2625,7 @@ class CLI:
                 neo4j_database=neo4j_database,
                 selected_modules=selected_modules,
                 update_tag=update_tag,
-                nais_api_key=nais_api_key,
+                nais_token_path=nais_token_path,
                 nais_base_url=nais_base_url,
                 aws_sync_all_profiles=aws_sync_all_profiles,
                 aws_regions=aws_regions,

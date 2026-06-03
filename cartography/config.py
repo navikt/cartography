@@ -516,8 +516,8 @@ class Config:
     :param jumpcloud_api_key: JumpCloud API key for authentication. Optional.
     :type jumpcloud_org_id: str
     :param jumpcloud_org_id: JumpCloud organization ID used as the tenant identifier. Optional.
-    :type nais_api_key: str
-    :param nais_api_key: API key / Bearer token for the NAIS GraphQL API. Optional.
+    :type nais_token_path: str
+    :param nais_token_path: Path to a file containing the NAIS Bearer token (e.g. a NAIS service-account token mounted in the pod). Optional.
     :type nais_base_url: str
     :param nais_base_url: Base URL for the NAIS GraphQL API (also used as tenant identifier). Optional.
     """
@@ -676,7 +676,7 @@ class Config:
         ubuntu_security_api_url=None,
         jumpcloud_api_key=None,
         jumpcloud_org_id=None,
-        nais_api_key=None,
+        nais_token_path=None,
         nais_base_url=None,
         socketdev_token=None,
         neo4j_connection_timeout=None,
@@ -876,6 +876,6 @@ class Config:
         self.ubuntu_security_api_url = ubuntu_security_api_url
         self.jumpcloud_api_key = jumpcloud_api_key
         self.jumpcloud_org_id = jumpcloud_org_id
-        self.nais_api_key = nais_api_key
+        self.nais_token_path = nais_token_path
         self.nais_base_url = nais_base_url
         self.socketdev_token = socketdev_token

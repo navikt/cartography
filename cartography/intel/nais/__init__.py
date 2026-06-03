@@ -34,7 +34,7 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     """
     Entry point for NAIS ingestion. Called by the cartography sync framework.
     """
-    if not config.nais_api_key or not config.nais_base_url:
+    if not config.nais_token_path or not config.nais_base_url:
         logger.info(
             "NAIS import is not configured - skipping this module. "
             "See docs to configure.",
@@ -43,6 +43,17 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
 
     logger.info("Starting NAIS sync")
 
+    try:
+        with open(config.nais_token_path) as f:
+            token = f.read().strip()
+    except OSError as e:
+        logger.error(
+            "NAIS import: failed to read token from %s: %s - skipping sync.",
+            config.nais_token_path,
+            e,
+        )
+        return
+
     tenant_id = config.nais_base_url
     common_job_parameters: dict[str, Any] = {
         "UPDATE_TAG": config.update_tag,
@@ -50,7 +61,7 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     }
 
     client = NaisGraphQLClient(
-        api_key=config.nais_api_key,
+        token=token,
         base_url=config.nais_base_url,
     )
 
