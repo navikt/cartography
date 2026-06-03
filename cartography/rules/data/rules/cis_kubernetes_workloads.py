@@ -8,6 +8,8 @@ Section 5.4: Secrets Management
 Section 5.6: General Policies
 """
 
+import json
+
 from cartography.rules.data.frameworks.cis import cis_kubernetes
 from cartography.rules.data.frameworks.iso27001 import iso27001_annex_a
 from cartography.rules.spec.model import Fact
@@ -27,6 +29,47 @@ CIS_REFERENCES = [
         url="https://kubernetes.io/docs/concepts/security/",
     ),
 ]
+
+
+def _cypher_string_list(values: tuple[str, ...]) -> str:
+    return "[" + ", ".join(json.dumps(value) for value in values) + "]"
+
+
+# Keep this to namespaces documented by upstream Kubernetes or project install
+# guides as system, controller, or add-on installation namespaces.
+K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMESPACES = (
+    "calico-apiserver",
+    "calico-system",
+    "cert-manager",
+    "gatekeeper-system",
+    "ingress-nginx",
+    "istio-ingress",
+    "istio-system",
+    "karpenter",
+    "kube-node-lease",
+    "kube-public",
+    "kube-system",
+    "kyverno",
+    "tigera-operator",
+)
+
+K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMESPACES_CYPHER = _cypher_string_list(
+    K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMESPACES
+)
+
+K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMES = (
+    "aws-load-balancer-controller",
+    "cluster-autoscaler",
+    "karpenter",
+    "metrics-server",
+    "vertical-pod-autoscaler-admission-controller",
+    "vertical-pod-autoscaler-recommender",
+    "vertical-pod-autoscaler-updater",
+)
+
+K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMES_CYPHER = _cypher_string_list(
+    K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMES
+)
 
 
 # =============================================================================
@@ -101,8 +144,8 @@ cis_k8s_5_4_1_secrets_in_env_vars = Rule(
 # Main node: KubernetesPod
 # =============================================================================
 class ServiceAccountTokenMountOutput(Finding):
-    pod_id: str | None = None
     pod_name: str | None = None
+    pod_id: str | None = None
     namespace: str | None = None
     service_account_name: str | None = None
     pod_automount_service_account_token: bool | None = None
@@ -118,32 +161,76 @@ _k8s_service_account_tokens_mounted = Fact(
         "explicitly enabled. This is a heuristic for identifying workloads that may "
         "not need API credentials."
     ),
-    cypher_query="""
+    cypher_query=f"""
     MATCH (cluster:KubernetesCluster)-[:RESOURCE]->(pod:KubernetesPod)
     OPTIONAL MATCH (pod)-[:USES_SERVICE_ACCOUNT]->(sa:KubernetesServiceAccount)
-    WITH cluster, pod, sa, coalesce(pod.automount_service_account_token, sa.automount_service_account_token, true) AS effective_automount
+    WITH
+        cluster,
+        pod,
+        sa,
+        coalesce(sa._ont_name, sa.name, pod.service_account_name) AS service_account_name,
+        coalesce(sa.namespace, pod.namespace) AS service_account_namespace,
+        sa.aws_role_arn IS NOT NULL OR EXISTS {{ (sa)-[:ASSUMES_ROLE]->(:AWSRole) }} AS service_account_assumes_aws_role,
+        sa.gcp_service_account IS NOT NULL OR EXISTS {{ (sa)-[:WORKLOAD_IDENTITY_BINDING]->(:GCPServiceAccount) }} AS service_account_assumes_gcp_identity,
+        coalesce(pod.automount_service_account_token, sa.automount_service_account_token, true) AS effective_automount
     WHERE effective_automount = true
-    AND NOT pod.namespace IN ['kube-system', 'kube-public', 'kube-node-lease']
+      AND NOT (
+        service_account_name = 'default'
+        OR service_account_namespace IN {K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMESPACES_CYPHER}
+        OR service_account_name IN {K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMES_CYPHER}
+        OR service_account_assumes_aws_role
+        OR service_account_assumes_gcp_identity
+      )
     RETURN
         pod.id AS pod_id,
         pod.name AS pod_name,
         pod.namespace AS namespace,
-        pod.service_account_name AS service_account_name,
+        service_account_name AS service_account_name,
         pod.automount_service_account_token AS pod_automount_service_account_token,
         sa.automount_service_account_token AS service_account_automount_service_account_token,
         cluster.name AS cluster_name
     """,
-    cypher_visual_query="""
+    cypher_visual_query=f"""
     MATCH p=(cluster:KubernetesCluster)-[:RESOURCE]->(pod:KubernetesPod)
     OPTIONAL MATCH p1=(pod)-[:USES_SERVICE_ACCOUNT]->(sa:KubernetesServiceAccount)
-    WITH cluster, pod, sa, p, p1, coalesce(pod.automount_service_account_token, sa.automount_service_account_token, true) AS effective_automount
+    WITH
+        cluster,
+        pod,
+        sa,
+        p,
+        p1,
+        coalesce(sa._ont_name, sa.name, pod.service_account_name) AS service_account_name,
+        coalesce(sa.namespace, pod.namespace) AS service_account_namespace,
+        sa.aws_role_arn IS NOT NULL OR EXISTS {{ (sa)-[:ASSUMES_ROLE]->(:AWSRole) }} AS service_account_assumes_aws_role,
+        sa.gcp_service_account IS NOT NULL OR EXISTS {{ (sa)-[:WORKLOAD_IDENTITY_BINDING]->(:GCPServiceAccount) }} AS service_account_assumes_gcp_identity,
+        coalesce(pod.automount_service_account_token, sa.automount_service_account_token, true) AS effective_automount
     WHERE effective_automount = true
-    AND NOT pod.namespace IN ['kube-system', 'kube-public', 'kube-node-lease']
+      AND NOT (
+        service_account_name = 'default'
+        OR service_account_namespace IN {K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMESPACES_CYPHER}
+        OR service_account_name IN {K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMES_CYPHER}
+        OR service_account_assumes_aws_role
+        OR service_account_assumes_gcp_identity
+      )
     RETURN *
     """,
-    cypher_count_query="""
+    cypher_count_query=f"""
     MATCH (pod:KubernetesPod)
-    WHERE NOT pod.namespace IN ['kube-system', 'kube-public', 'kube-node-lease']
+    OPTIONAL MATCH (pod)-[:USES_SERVICE_ACCOUNT]->(sa:KubernetesServiceAccount)
+    WITH
+        pod,
+        sa,
+        coalesce(sa._ont_name, sa.name, pod.service_account_name) AS service_account_name,
+        coalesce(sa.namespace, pod.namespace) AS service_account_namespace,
+        sa.aws_role_arn IS NOT NULL OR EXISTS {{ (sa)-[:ASSUMES_ROLE]->(:AWSRole) }} AS service_account_assumes_aws_role,
+        sa.gcp_service_account IS NOT NULL OR EXISTS {{ (sa)-[:WORKLOAD_IDENTITY_BINDING]->(:GCPServiceAccount) }} AS service_account_assumes_gcp_identity
+    WHERE NOT (
+        service_account_name = 'default'
+        OR service_account_namespace IN {K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMESPACES_CYPHER}
+        OR service_account_name IN {K8S_INFRASTRUCTURE_SERVICE_ACCOUNT_NAMES_CYPHER}
+        OR service_account_assumes_aws_role
+        OR service_account_assumes_gcp_identity
+      )
     RETURN COUNT(pod) AS count
     """,
     asset_id_field="pod_id",
@@ -181,8 +268,8 @@ cis_k8s_5_1_6_sa_token_mounts = Rule(
 # Main node: KubernetesPod
 # =============================================================================
 class HostPidOutput(Finding):
-    pod_id: str | None = None
     pod_name: str | None = None
+    pod_id: str | None = None
     namespace: str | None = None
     cluster_name: str | None = None
 
@@ -231,8 +318,8 @@ cis_k8s_5_2_3_host_pid = Rule(
 # Main node: KubernetesPod
 # =============================================================================
 class HostIpcOutput(Finding):
-    pod_id: str | None = None
     pod_name: str | None = None
+    pod_id: str | None = None
     namespace: str | None = None
     cluster_name: str | None = None
 
@@ -281,8 +368,8 @@ cis_k8s_5_2_4_host_ipc = Rule(
 # Main node: KubernetesPod
 # =============================================================================
 class HostNetworkOutput(Finding):
-    pod_id: str | None = None
     pod_name: str | None = None
+    pod_id: str | None = None
     namespace: str | None = None
     cluster_name: str | None = None
 
@@ -332,8 +419,8 @@ cis_k8s_5_2_5_host_network = Rule(
 # Main node: KubernetesContainer
 # =============================================================================
 class AllowPrivilegeEscalationOutput(Finding):
-    container_id: str | None = None
     container_name: str | None = None
+    container_id: str | None = None
     image: str | None = None
     namespace: str | None = None
     cluster_name: str | None = None
@@ -392,8 +479,8 @@ cis_k8s_5_2_6_allow_privilege_escalation = Rule(
 # Main node: KubernetesPod
 # =============================================================================
 class HostPathVolumeOutput(Finding):
-    pod_id: str | None = None
     pod_name: str | None = None
+    pod_id: str | None = None
     namespace: str | None = None
     host_path_volume_paths: list[str] | None = None
     cluster_name: str | None = None
@@ -448,8 +535,8 @@ cis_k8s_5_2_11_host_path_volumes = Rule(
 # Main node: KubernetesContainer
 # =============================================================================
 class HostPortOutput(Finding):
-    container_id: str | None = None
     container_name: str | None = None
+    container_id: str | None = None
     namespace: str | None = None
     host_ports: list[int] | None = None
     cluster_name: str | None = None
@@ -505,8 +592,8 @@ cis_k8s_5_2_12_host_ports = Rule(
 # Main node: KubernetesPod
 # =============================================================================
 class SeccompRuntimeDefaultOutput(Finding):
-    pod_id: str | None = None
     pod_name: str | None = None
+    pod_id: str | None = None
     namespace: str | None = None
     pod_seccomp_profile_type: str | None = None
     container_names_without_runtime_default: list[str] | None = None
