@@ -370,6 +370,7 @@ class CLI:
                         'We recommend including "create-indexes" first and "analysis" last.'
                     ),
                     rich_help_panel=PANEL_CORE,
+                    envvar="CARTOGRAPHY_SELECTED_MODULES",
                 ),
             ] = None,
             update_tag: Annotated[
@@ -746,6 +747,7 @@ class CLI:
                     help="Skip dependency manifest fetching for archived GitHub repos.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SKIP_ARCHIVED_REPO_MANIFESTS",
                 ),
             ] = False,
             github_sync_users: Annotated[
@@ -755,6 +757,7 @@ class CLI:
                     help="Fetch GitHub organization members and enterprise owners.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_USERS",
                 ),
             ] = True,
             github_sync_repos: Annotated[
@@ -764,6 +767,7 @@ class CLI:
                     help="Fetch GitHub repositories (base for all repo sub-options).",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPOS",
                 ),
             ] = True,
             github_sync_personal_access_tokens: Annotated[
@@ -773,6 +777,7 @@ class CLI:
                     help="Fetch fine-grained and classic PATs approved for the org.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_PERSONAL_ACCESS_TOKENS",
                 ),
             ] = True,
             github_sync_dependabot_alerts: Annotated[
@@ -782,6 +787,7 @@ class CLI:
                     help="Fetch all Dependabot alerts for the org.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_DEPENDABOT_ALERTS",
                 ),
             ] = True,
             github_sync_teams: Annotated[
@@ -791,6 +797,7 @@ class CLI:
                     help="Fetch teams with repository permissions, members, and child teams.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_TEAMS",
                 ),
             ] = True,
             github_sync_actions: Annotated[
@@ -800,6 +807,7 @@ class CLI:
                     help="Fetch Actions workflows, secrets, variables, and environments.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_ACTIONS",
                 ),
             ] = True,
             github_sync_commits: Annotated[
@@ -809,6 +817,7 @@ class CLI:
                     help="Aggregate per-user commit statistics and write COMMITTED_TO relationships.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_COMMITS",
                 ),
             ] = True,
             github_sync_packages: Annotated[
@@ -818,6 +827,7 @@ class CLI:
                     help="Fetch container packages and the full GHCR image pipeline (manifests, tags, attestations).",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_PACKAGES",
                 ),
             ] = True,
             github_sync_supply_chain: Annotated[
@@ -827,6 +837,7 @@ class CLI:
                     help="Correlate container images to source repos via SLSA provenance, Dockerfiles, and workflow paths.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_SUPPLY_CHAIN",
                 ),
             ] = True,
             github_sync_repo_privileged_details: Annotated[
@@ -839,6 +850,7 @@ class CLI:
                     ),
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPO_PRIVILEGED_DETAILS",
                 ),
             ] = True,
             github_sync_repo_collaborators: Annotated[
@@ -848,6 +860,7 @@ class CLI:
                     help="Fetch DIRECT and OUTSIDE collaborators per repo with their permissions. O(n) API calls.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPO_COLLABORATORS",
                 ),
             ] = True,
             github_sync_repo_dependency_manifests: Annotated[
@@ -857,6 +870,7 @@ class CLI:
                     help="Fetch dependency graph manifests per repo (package name, URL, package manager). O(n) API calls.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
+                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPO_DEPENDENCY_MANIFESTS",
                 ),
             ] = True,
             # =================================================================
