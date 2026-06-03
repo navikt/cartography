@@ -54,6 +54,13 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         )
         return
 
+    if not token:
+        logger.error(
+            "NAIS import: token file %s is empty - skipping sync.",
+            config.nais_token_path,
+        )
+        return
+
     tenant_id = config.nais_base_url
     common_job_parameters: dict[str, Any] = {
         "UPDATE_TAG": config.update_tag,
@@ -61,7 +68,7 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     }
 
     client = NaisGraphQLClient(
-        token=token,
+        token_path=config.nais_token_path,
         base_url=config.nais_base_url,
     )
 

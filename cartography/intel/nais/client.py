@@ -18,15 +18,16 @@ _MAX_TRIES = 4  # 1 initial + 3 retries (~1s, ~2s, ~4s backoff)
 
 
 class NaisGraphQLClient:
-    def __init__(self, token: str, base_url: str) -> None:
+    def __init__(self, token_path: str, base_url: str) -> None:
         self._base_url = base_url.rstrip("/")
+        self._token_path = token_path
         self._session = requests.Session()
-        self._session.headers.update(
-            {
-                "Authorization": f"Bearer {token}",
-                "Content-Type": "application/json",
-            }
-        )
+        self._session.headers.update({"Content-Type": "application/json"})
+
+    def _get_token(self) -> str:
+        """Read the Bearer token fresh from disk on every call to handle short-lived projected tokens."""
+        with open(self._token_path) as f:
+            return f.read().strip()
 
     def query(
         self, query: str, variables: dict[str, Any] | None = None
@@ -42,7 +43,12 @@ class NaisGraphQLClient:
         if variables:
             payload["variables"] = variables
 
-        response = self._session.post(self._base_url, json=payload, timeout=60)
+        response = self._session.post(
+            self._base_url,
+            json=payload,
+            timeout=60,
+            headers={"Authorization": f"Bearer {self._get_token()}"},
+        )
         response.raise_for_status()
         result = response.json()
 
