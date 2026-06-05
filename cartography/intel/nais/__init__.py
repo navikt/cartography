@@ -34,22 +34,34 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     """
     Entry point for NAIS ingestion. Called by the cartography sync framework.
     """
-    if not config.nais_token_path or not config.nais_base_url:
+    if not config.nais_base_url:
         logger.info(
             "NAIS import is not configured - skipping this module. "
             "See docs to configure.",
         )
         return
 
+    # Resolve token path: explicit config takes precedence, then fall back to
+    # the NAIS_SERVICE_ACCOUNT_TOKEN_PATH env var injected by the NAIS platform.
+    token_path = config.nais_token_path or os.environ.get(
+        "NAIS_SERVICE_ACCOUNT_TOKEN_PATH"
+    )
+    if not token_path:
+        logger.error(
+            "NAIS import: no token path configured and NAIS_SERVICE_ACCOUNT_TOKEN_PATH "
+            "is not set - skipping sync.",
+        )
+        return
+
     logger.info("Starting NAIS sync")
 
     try:
-        with open(config.nais_token_path) as f:
+        with open(token_path) as f:
             token = f.read().strip()
     except OSError as e:
         logger.error(
             "NAIS import: failed to read token from %s: %s - skipping sync.",
-            config.nais_token_path,
+            token_path,
             e,
         )
         return
@@ -57,7 +69,7 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     if not token:
         logger.error(
             "NAIS import: token file %s is empty - skipping sync.",
-            config.nais_token_path,
+            token_path,
         )
         return
 
@@ -68,7 +80,7 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     }
 
     client = NaisGraphQLClient(
-        token_path=config.nais_token_path,
+        token_path=token_path,
         base_url=config.nais_base_url,
     )
 

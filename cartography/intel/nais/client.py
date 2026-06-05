@@ -26,8 +26,16 @@ class NaisGraphQLClient:
 
     def _get_token(self) -> str:
         """Read the Bearer token fresh from disk on every call to handle short-lived projected tokens."""
+        token = ""
         with open(self._token_path) as f:
-            return f.read().strip()
+            token = f.read().strip()
+        logger.debug(
+            "NAIS: read token from %s (length=%d, prefix=%.8s...)",
+            self._token_path,
+            len(token),
+            token,
+        )
+        return token
 
     def query(
         self, query: str, variables: dict[str, Any] | None = None
@@ -49,6 +57,13 @@ class NaisGraphQLClient:
             timeout=60,
             headers={"Authorization": f"Bearer {self._get_token()}"},
         )
+        if not response.ok:
+            logger.error(
+                "NAIS API error: status=%d url=%s body=%s",
+                response.status_code,
+                response.url,
+                response.text[:500],
+            )
         response.raise_for_status()
         result = response.json()
 
