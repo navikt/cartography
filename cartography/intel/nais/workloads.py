@@ -21,7 +21,7 @@ query GetEnvironments {
 """
 
 WORKLOADS_QUERY = """
-query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor) {
+query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor, $deploymentLimit: Int!) {
   environment(name: $env) {
     workloads(first: $first, after: $cursor) {
       pageInfo { hasNextPage endCursor }
@@ -38,6 +38,21 @@ query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor) {
           }
           image { name tag }
           ingresses { url }
+          deployments(first: $deploymentLimit) {
+            nodes {
+              id
+              createdAt
+              teamSlug
+              environmentName
+              repository
+              deployerUsername
+              commitSha
+              triggerUrl
+              statuses(first: 1) {
+                nodes { state }
+              }
+            }
+          }
         }
         ... on Job {
           __typename
@@ -50,26 +65,23 @@ query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor) {
             environment { name }
           }
           image { name tag }
+          deployments(first: $deploymentLimit) {
+            nodes {
+              id
+              createdAt
+              teamSlug
+              environmentName
+              repository
+              deployerUsername
+              commitSha
+              triggerUrl
+              statuses(first: 1) {
+                nodes { state }
+              }
+            }
+          }
         }
       }
-    }
-  }
-}
-"""
-
-DEPLOYMENTS_QUERY = """
-query GetDeployments($first: Int!, $cursor: Cursor) {
-  deployments(first: $first, after: $cursor) {
-    pageInfo { hasNextPage endCursor }
-    nodes {
-      id
-      createdAt
-      teamSlug
-      environmentName
-      repository
-      deployerUsername
-      commitSha
-      triggerUrl
     }
   }
 }
@@ -81,7 +93,10 @@ def get_environments(client: NaisGraphQLClient) -> list[str]:
     return [e["name"] for e in (data.get("environments") or {}).get("nodes") or []]
 
 
-def get_workloads(client: NaisGraphQLClient) -> list[dict[str, Any]]:
+def get_workloads(
+    client: NaisGraphQLClient,
+    deployment_limit: int = 10,
+) -> list[dict[str, Any]]:
     environments = get_environments(client)
     logger.info(
         "NAIS workloads: fetching workloads for %d environments", len(environments)
@@ -91,7 +106,7 @@ def get_workloads(client: NaisGraphQLClient) -> list[dict[str, Any]]:
         results = client.paginate(
             WORKLOADS_QUERY,
             ["environment", "workloads"],
-            variables={"env": env},
+            variables={"env": env, "deploymentLimit": deployment_limit},
         )
         workloads.extend(results)
         logger.info(
@@ -105,22 +120,29 @@ def get_workloads(client: NaisGraphQLClient) -> list[dict[str, Any]]:
     return workloads
 
 
-def get_deployments(client: NaisGraphQLClient) -> list[dict[str, Any]]:
-    return client.paginate(DEPLOYMENTS_QUERY, ["deployments"])
+def transform_workloads(
+    raw: list[dict[str, Any]],
+) -> tuple[list[dict], list[dict]]:
+    """Return (apps, deployments) extracted from raw workload nodes.
 
-
-def transform_workloads(raw: list[dict[str, Any]]) -> list[dict]:
+    Deployments are fetched inline per workload (most-recent-first).
+    The first deployment per workload whose latest status is SUCCESS is
+    flagged is_active=True; all others are False.
+    """
     apps = []
+    all_deployments: list[dict] = []
+
     for w in raw:
         team = w.get("team") or {}
         team_env = w.get("teamEnvironment") or {}
         env = team_env.get("environment") or {}
         image = w.get("image") or {}
-        ingress_hosts = [i["url"] for i in (w.get("ingresses") or []) if i.get("url")]
+        ingress_urls = [i["url"] for i in (w.get("ingresses") or []) if i.get("url")]
 
+        app_id = w["id"]
         apps.append(
             {
-                "id": w["id"],
+                "id": app_id,
                 "name": w.get("name"),
                 "workload_type": w.get("__typename"),
                 "team_slug": team.get("slug"),
@@ -129,30 +151,42 @@ def transform_workloads(raw: list[dict[str, Any]]) -> list[dict]:
                 "image_name": image.get("name"),
                 "image_tag": image.get("tag"),
                 "state": w.get("appState") or w.get("jobState"),
-                "ingresses": ingress_hosts,
+                "ingresses": ingress_urls,
             }
         )
-    return apps
 
+        raw_deps = (w.get("deployments") or {}).get("nodes") or []
+        active_found = False
+        for d in raw_deps:
+            statuses = (d.get("statuses") or {}).get("nodes") or []
+            latest_status = statuses[0]["state"] if statuses else None
 
-def transform_deployments(raw: list[dict[str, Any]]) -> list[dict]:
-    result = []
-    for d in raw:
-        repo = d.get("repository")
-        result.append(
-            {
-                "id": d["id"],
-                "created_at": d.get("createdAt"),
-                "team_slug": d.get("teamSlug"),
-                "environment_name": d.get("environmentName"),
-                "repository": repo,
-                "repository_url": f"https://github.com/{repo}" if repo else None,
-                "deployer_username": d.get("deployerUsername"),
-                "commit_sha": d.get("commitSha"),
-                "trigger_url": d.get("triggerUrl"),
-            }
-        )
-    return result
+            is_active = False
+            if not active_found and latest_status == "SUCCESS":
+                is_active = True
+                active_found = True
+
+            repo = d.get("repository")
+            # Fall back to parent workload team slug if not on the deployment node
+            team_slug = d.get("teamSlug") or team.get("slug")
+            all_deployments.append(
+                {
+                    "id": d["id"],
+                    "created_at": d.get("createdAt"),
+                    "team_slug": team_slug,
+                    "environment_name": d.get("environmentName"),
+                    "repository": repo,
+                    "repository_url": f"https://github.com/{repo}" if repo else None,
+                    "deployer_username": d.get("deployerUsername"),
+                    "commit_sha": d.get("commitSha"),
+                    "trigger_url": d.get("triggerUrl"),
+                    "latest_status": latest_status,
+                    "is_active": is_active,
+                    "app_id": app_id,
+                }
+            )
+
+    return apps, all_deployments
 
 
 @timeit
@@ -205,24 +239,22 @@ def sync(
     tenant_id: str,
     update_tag: int,
     common_job_parameters: dict[str, Any],
+    deployment_limit: int = 10,
     _workloads_raw: list[dict[str, Any]] | None = None,
-    _deployments_raw: list[dict[str, Any]] | None = None,
 ) -> None:
     logger.info("Syncing NAIS workloads")
     raw_workloads = (
-        _workloads_raw if _workloads_raw is not None else get_workloads(client)
+        _workloads_raw
+        if _workloads_raw is not None
+        else get_workloads(client, deployment_limit)
     )
-    apps = transform_workloads(raw_workloads)
-    logger.info("NAIS workloads: %d workloads to load", len(apps))
+    apps, deployments = transform_workloads(raw_workloads)
+    logger.info(
+        "NAIS workloads: %d workloads, %d deployments to load",
+        len(apps),
+        len(deployments),
+    )
     load_apps(neo4j_session, apps, tenant_id, update_tag)
-
-    logger.info("Syncing NAIS deployments")
-    raw_deployments = (
-        _deployments_raw if _deployments_raw is not None else get_deployments(client)
-    )
-    deployments = transform_deployments(raw_deployments)
-    logger.info("NAIS deployments: %d deployments to load", len(deployments))
     load_deployments(neo4j_session, deployments, tenant_id, update_tag)
-
     cleanup(neo4j_session, common_job_parameters)
     logger.info("NAIS workloads sync complete")

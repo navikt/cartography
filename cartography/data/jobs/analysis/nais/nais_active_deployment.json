@@ -1,0 +1,16 @@
+{
+    "name": "NAIS active deployment analysis",
+    "statements": [
+        {
+            "__comment__": "Merge ACTIVE_DEPLOYMENT edge from NaisApp to its active NaisDeployment",
+            "query": "MATCH (a:NaisApp)-[:HAS_DEPLOYMENT]->(d:NaisDeployment) WHERE d.is_active = true MERGE (a)-[r:ACTIVE_DEPLOYMENT]->(d) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
+            "iterative": false
+        },
+        {
+            "__comment__": "Delete stale ACTIVE_DEPLOYMENT relationships",
+            "query": "MATCH (a:NaisApp)-[r:ACTIVE_DEPLOYMENT]->(d:NaisDeployment) WHERE r.lastupdated <> $UPDATE_TAG WITH r LIMIT $LIMIT_SIZE DELETE r RETURN COUNT(*) as TotalCompleted",
+            "iterative": true,
+            "iterationsize": 100
+        }
+    ]
+}

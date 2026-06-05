@@ -114,6 +114,8 @@ class NaisDeploymentNodeProperties(CartographyNodeProperties):
     deployer_username: PropertyRef = PropertyRef("deployer_username")
     commit_sha: PropertyRef = PropertyRef("commit_sha")
     trigger_url: PropertyRef = PropertyRef("trigger_url")
+    latest_status: PropertyRef = PropertyRef("latest_status")
+    is_active: PropertyRef = PropertyRef("is_active")
 
 
 @dataclass(frozen=True)
@@ -153,6 +155,23 @@ class NaisDeploymentToTeamRel(CartographyRelSchema):
 
 
 @dataclass(frozen=True)
+class NaisDeploymentToAppRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# (:NaisApp)-[:HAS_DEPLOYMENT]->(:NaisDeployment)
+class NaisDeploymentToAppRel(CartographyRelSchema):
+    target_node_label: str = "NaisApp"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("app_id")},
+    )
+    direction: LinkDirection = LinkDirection.INWARD
+    rel_label: str = "HAS_DEPLOYMENT"
+    properties: NaisDeploymentToAppRelProperties = NaisDeploymentToAppRelProperties()
+
+
+@dataclass(frozen=True)
 class NaisDeploymentToGitHubRepoRelProperties(CartographyRelProperties):
     lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
 
@@ -180,6 +199,7 @@ class NaisDeploymentSchema(CartographyNodeSchema):
     other_relationships: OtherRelationships = OtherRelationships(
         [
             NaisDeploymentToTeamRel(),
+            NaisDeploymentToAppRel(),
             NaisDeploymentToGitHubRepoRel(),
         ]
     )
