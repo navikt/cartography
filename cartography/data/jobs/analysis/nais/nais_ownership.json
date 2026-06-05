@@ -13,8 +13,8 @@
             "iterationsize": 100
         },
         {
-            "__comment__": "KubernetesPod DEPLOYED_FROM GitHubRepository via KubernetesNamespace -> NaisApp -> NaisDeployment",
-            "query": "MATCH (pod:KubernetesPod)<-[:CONTAINS]-(ns:KubernetesNamespace)<-[:RUNS_IN]-(a:NaisApp)<-[:HAS_APP]-(t:NaisTeam)-[:HAS_DEPLOYMENT]->(d:NaisDeployment)-[:DEPLOYED_FROM]->(repo:GitHubRepository) WHERE d.environment_name = a.environment MERGE (pod)-[r:DEPLOYED_FROM]->(repo) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
+            "__comment__": "KubernetesPod DEPLOYED_FROM GitHubRepository via NaisApp -> ACTIVE_DEPLOYMENT -> NaisDeployment",
+            "query": "MATCH (pod:KubernetesPod)<-[:CONTAINS]-(ns:KubernetesNamespace)<-[:RUNS_IN]-(a:NaisApp)-[:ACTIVE_DEPLOYMENT]->(d:NaisDeployment)-[:DEPLOYED_FROM]->(repo:GitHubRepository) MERGE (pod)-[r:DEPLOYED_FROM]->(repo) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
             "iterative": false
         },
         {
