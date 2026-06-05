@@ -77,6 +77,7 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
     common_job_parameters: dict[str, Any] = {
         "UPDATE_TAG": config.update_tag,
         "TENANT_ID": tenant_id,
+        "NAIS_TENANT_ID": tenant_id,
     }
 
     client = NaisGraphQLClient(
