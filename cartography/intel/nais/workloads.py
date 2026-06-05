@@ -30,20 +30,20 @@ query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor) {
           __typename
           id
           name
-          state
+          appState: state
           team { slug }
           teamEnvironment {
             gcpProjectID
             environment { name }
           }
           image { name tag }
-          ingresses { host }
+          ingresses { url }
         }
         ... on Job {
           __typename
           id
           name
-          state
+          jobState: state
           team { slug }
           teamEnvironment {
             gcpProjectID
@@ -116,7 +116,7 @@ def transform_workloads(raw: list[dict[str, Any]]) -> list[dict]:
         team_env = w.get("teamEnvironment") or {}
         env = team_env.get("environment") or {}
         image = w.get("image") or {}
-        ingress_hosts = [i["host"] for i in (w.get("ingresses") or []) if i.get("host")]
+        ingress_hosts = [i["url"] for i in (w.get("ingresses") or []) if i.get("url")]
 
         apps.append(
             {
@@ -128,7 +128,7 @@ def transform_workloads(raw: list[dict[str, Any]]) -> list[dict]:
                 "gcp_project_id": team_env.get("gcpProjectID"),
                 "image_name": image.get("name"),
                 "image_tag": image.get("tag"),
-                "state": w.get("state"),
+                "state": w.get("appState") or w.get("jobState"),
                 "ingresses": ingress_hosts,
             }
         )
