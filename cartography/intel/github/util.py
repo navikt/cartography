@@ -15,8 +15,8 @@ from urllib.parse import urlunsplit
 import requests
 
 logger = logging.getLogger(__name__)
-# Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
-_TIMEOUT = (60, 60)
+# Connect and read timeouts of 30 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
+_TIMEOUT = (30, 30)
 
 
 def _resolve_token(token: Any) -> str:
@@ -148,6 +148,7 @@ def handle_rate_limit_sleep(token: str) -> None:
     response = requests.get(
         "https://api.github.com/rate_limit",
         headers={"Authorization": f"Bearer {_resolve_token(token)}"},
+        timeout=_TIMEOUT,
     )
     response.raise_for_status()
     response_json = response.json()

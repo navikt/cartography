@@ -15,13 +15,13 @@ import jwt
 import requests
 
 from cartography.intel.github.util import _get_rest_api_base_url
+from cartography.intel.github.util import _TIMEOUT
 
 logger = logging.getLogger(__name__)
 
 # Installation tokens are valid for 1 hour; refresh 5 minutes before expiry
 _TOKEN_REFRESH_BUFFER_SECONDS = 300
 _JWT_EXPIRATION_SECONDS = 600  # 10 minutes (GitHub max)
-_TIMEOUT = (60, 60)
 
 
 class GitHubCredential:
