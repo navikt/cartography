@@ -1,9 +1,23 @@
 from unittest.mock import MagicMock
 
+import os
+
+import cartography.intel.nais
 import cartography.intel.nais.workloads
 import tests.data.nais.workloads
+from cartography.util import run_analysis_job
 from tests.integration.util import check_nodes
 from tests.integration.util import check_rels
+
+NAIS_ANALYSIS_DIR = os.path.join(
+    os.path.dirname(cartography.intel.nais.__file__),
+    "..",
+    "..",
+    "data",
+    "jobs",
+    "analysis",
+    "nais",
+)
 
 TEST_UPDATE_TAG = 123456789
 TEST_TENANT_ID = "https://console.nav.cloud.nais.io/query"
@@ -12,6 +26,19 @@ COMMON_JOB_PARAMETERS = {
     "TENANT_ID": TEST_TENANT_ID,
     "NAIS_TENANT_ID": TEST_TENANT_ID,
 }
+
+
+def _seed_github_users(neo4j_session) -> None:
+    """Seed minimal GitHubUser nodes for deployer MatchLink tests."""
+    neo4j_session.run(
+        """
+        MERGE (u:GitHubUser {id: 'https://github.com/alice'})
+        SET u.username = 'alice', u.lastupdated = $update_tag
+        MERGE (u2:GitHubUser {id: 'https://github.com/bob'})
+        SET u2.username = 'bob', u2.lastupdated = $update_tag
+        """,
+        update_tag=TEST_UPDATE_TAG,
+    )
 
 
 def test_transform_workloads():
@@ -107,3 +134,122 @@ def test_load_nais_workloads(neo4j_session):
         ("app-1", "deploy-old"),
         ("job-1", "deploy-2"),
     }
+
+
+def test_load_deployer_links(neo4j_session):
+    """GitHubUser-[:TRIGGERED_BY]->NaisDeployment edges are created for known deployers."""
+    # Arrange
+    _seed_github_users(neo4j_session)
+    client = MagicMock()
+
+    # Act
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+
+    # Assert — known deployers are linked
+    assert check_rels(
+        neo4j_session,
+        "GitHubUser",
+        "username",
+        "NaisDeployment",
+        "id",
+        "TRIGGERED_BY",
+        rel_direction_right=True,
+    ) == {
+        ("alice", "deploy-1"),
+        ("bob", "deploy-old"),
+    }
+
+
+def test_deployer_link_skipped_when_no_github_user(neo4j_session):
+    """TRIGGERED_BY edge is silently skipped when GitHubUser does not exist."""
+    # Arrange — ensure no GitHubUser nodes exist
+    neo4j_session.run("MATCH (u:GitHubUser) DETACH DELETE u")
+    client = MagicMock()
+
+    # Act
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+
+    # Assert — no TRIGGERED_BY edges created (GitHubUser nodes don't exist)
+    result = neo4j_session.run(
+        "MATCH ()-[r:TRIGGERED_BY]->() RETURN count(r) AS cnt"
+    ).single()
+    assert result["cnt"] == 0
+
+
+def test_deployer_link_cleanup(neo4j_session):
+    """Stale TRIGGERED_BY edges are removed on the next sync with a new update tag."""
+    # Arrange
+    _seed_github_users(neo4j_session)
+    client = MagicMock()
+
+    # Act — first sync
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+
+    # Assert — edges exist after first sync
+    result = neo4j_session.run(
+        "MATCH ()-[r:TRIGGERED_BY]->() RETURN count(r) AS cnt"
+    ).single()
+    assert result["cnt"] == 2
+
+    # Act — second sync with new update tag (simulates deployments no longer returned)
+    new_tag = TEST_UPDATE_TAG + 1
+    new_params = {**COMMON_JOB_PARAMETERS, "UPDATE_TAG": new_tag}
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        new_tag,
+        new_params,
+        _workloads_raw=[],  # empty — all deployments are stale
+    )
+
+    # Assert — stale edges removed
+    result = neo4j_session.run(
+        "MATCH ()-[r:TRIGGERED_BY]->() RETURN count(r) AS cnt"
+    ).single()
+    assert result["cnt"] == 0
+
+
+def test_nais_gar_link_no_gar_nodes(neo4j_session):
+    """nais_gar_link analysis job is a no-op when GCPArtifactRegistryRepositoryImage nodes are absent."""
+    # Arrange — load apps so NaisApp nodes exist, but no GAR nodes
+    client = MagicMock()
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+    gar_link_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_gar_link.json")
+
+    # Act — run the analysis job directly; should not raise
+    run_analysis_job(gar_link_job, neo4j_session, COMMON_JOB_PARAMETERS)
+
+    # Assert — no RUNS_GAR_IMAGE edges created (no GAR nodes in graph)
+    result = neo4j_session.run(
+        "MATCH ()-[r:RUNS_GAR_IMAGE]->() RETURN count(r) AS cnt"
+    ).single()
+    assert result["cnt"] == 0

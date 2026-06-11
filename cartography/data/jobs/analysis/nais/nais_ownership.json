@@ -13,8 +13,8 @@
             "iterationsize": 100
         },
         {
-            "__comment__": "KubernetesPod DEPLOYED_FROM GitHubRepository via NaisApp -> ACTIVE_DEPLOYMENT -> NaisDeployment",
-            "query": "MATCH (pod:KubernetesPod)<-[:CONTAINS]-(ns:KubernetesNamespace)<-[:RUNS_IN]-(a:NaisApp)-[:ACTIVE_DEPLOYMENT]->(d:NaisDeployment)-[:DEPLOYED_FROM]->(repo:GitHubRepository) MERGE (pod)-[r:DEPLOYED_FROM]->(repo) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
+            "__comment__": "KubernetesPod DEPLOYED_FROM GitHubRepository via NaisApp -> RUNS_IMAGE -> KubernetesContainer <- CONTAINS <- KubernetesPod. Requires the pod to actually contain the container running the NaisApp image, eliminating namespace-level fanout where all pods in a team namespace were incorrectly linked to every app repo.",
+            "query": "MATCH (a:NaisApp)-[:RUNS_IMAGE]->(c:KubernetesContainer)<-[:CONTAINS]-(pod:KubernetesPod) MATCH (a)-[:ACTIVE_DEPLOYMENT]->(d:NaisDeployment)-[:DEPLOYED_FROM]->(repo:GitHubRepository) MERGE (pod)-[r:DEPLOYED_FROM]->(repo) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
             "iterative": false
         },
         {

@@ -4,10 +4,12 @@ from typing import Any
 import neo4j
 
 from cartography.client.core.tx import load
+from cartography.client.core.tx import load_matchlinks
 from cartography.graph.job import GraphJob
 from cartography.intel.nais.client import NaisGraphQLClient
 from cartography.models.nais.workload import NaisAppSchema
 from cartography.models.nais.workload import NaisDeploymentSchema
+from cartography.models.nais.workload import NaisDeploymentToGitHubUserRel
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -222,6 +224,28 @@ def load_deployments(
 
 
 @timeit
+def load_deployer_links(
+    neo4j_session: neo4j.Session,
+    deployments: list[dict],
+    tenant_id: str,
+    update_tag: int,
+) -> None:
+    mapping = [
+        {"deployment_id": d["id"], "deployer_username": d["deployer_username"]}
+        for d in deployments
+        if d.get("deployer_username")
+    ]
+    load_matchlinks(
+        neo4j_session,
+        NaisDeploymentToGitHubUserRel(),
+        mapping,
+        lastupdated=update_tag,
+        _sub_resource_label="NaisTenant",
+        _sub_resource_id=tenant_id,
+    )
+
+
+@timeit
 def cleanup(
     neo4j_session: neo4j.Session,
     common_job_parameters: dict[str, Any],
@@ -230,6 +254,12 @@ def cleanup(
     GraphJob.from_node_schema(NaisDeploymentSchema(), common_job_parameters).run(
         neo4j_session
     )
+    GraphJob.from_matchlink(
+        NaisDeploymentToGitHubUserRel(),
+        "NaisTenant",
+        common_job_parameters["NAIS_TENANT_ID"],
+        common_job_parameters["UPDATE_TAG"],
+    ).run(neo4j_session)
 
 
 @timeit
@@ -256,5 +286,6 @@ def sync(
     )
     load_apps(neo4j_session, apps, tenant_id, update_tag)
     load_deployments(neo4j_session, deployments, tenant_id, update_tag)
+    load_deployer_links(neo4j_session, deployments, tenant_id, update_tag)
     cleanup(neo4j_session, common_job_parameters)
     logger.info("NAIS workloads sync complete")

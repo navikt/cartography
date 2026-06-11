@@ -15,8 +15,8 @@ from urllib.parse import urlunsplit
 import requests
 
 logger = logging.getLogger(__name__)
-# Connect and read timeouts of 30 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
-_TIMEOUT = (30, 30)
+# Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
+_TIMEOUT = (60, 60)
 
 
 def _resolve_token(token: Any) -> str:

@@ -2303,10 +2303,11 @@ def sync(
                 github_url,
                 github_api_key,
             )
-        except TypeError:
-            # due to permission errors or transient network error or some other nonsense
+        except (TypeError, ValueError):
+            # TypeError: permission errors or transient network issues
+            # ValueError: fetch_all raises this when all retries are exhausted (e.g. repeated timeouts)
             logger.warning(
-                "Unable to list repo collaborators due to permission errors; continuing on.",
+                "Unable to list repo collaborators due to permission errors or exhausted retries; continuing on.",
                 exc_info=True,
             )
 

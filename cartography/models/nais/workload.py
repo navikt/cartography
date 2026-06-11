@@ -6,8 +6,10 @@ from cartography.models.core.nodes import CartographyNodeSchema
 from cartography.models.core.relationships import CartographyRelProperties
 from cartography.models.core.relationships import CartographyRelSchema
 from cartography.models.core.relationships import LinkDirection
+from cartography.models.core.relationships import make_source_node_matcher
 from cartography.models.core.relationships import make_target_node_matcher
 from cartography.models.core.relationships import OtherRelationships
+from cartography.models.core.relationships import SourceNodeMatcher
 from cartography.models.core.relationships import TargetNodeMatcher
 
 
@@ -202,4 +204,40 @@ class NaisDeploymentSchema(CartographyNodeSchema):
             NaisDeploymentToAppRel(),
             NaisDeploymentToGitHubRepoRel(),
         ]
+    )
+
+
+# ---------------------------------------------------------------------------
+# NaisDeploymentToGitHubUserRel (MatchLink)
+# Links NaisDeployment to the GitHubUser who triggered it via deployerUsername.
+# Silently skips if the GitHubUser node does not exist (bot accounts, external
+# contributors not in the GitHub org, or GitHub module not yet synced).
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class NaisDeploymentToGitHubUserRelProperties(CartographyRelProperties):
+    lastupdated: PropertyRef = PropertyRef("lastupdated", set_in_kwargs=True)
+    _sub_resource_label: PropertyRef = PropertyRef(
+        "_sub_resource_label", set_in_kwargs=True
+    )
+    _sub_resource_id: PropertyRef = PropertyRef("_sub_resource_id", set_in_kwargs=True)
+
+
+@dataclass(frozen=True)
+# (:GitHubUser)-[:TRIGGERED_BY]->(:NaisDeployment)
+# Matched via GitHubUser.username == NaisDeployment.deployer_username
+class NaisDeploymentToGitHubUserRel(CartographyRelSchema):
+    target_node_label: str = "NaisDeployment"
+    target_node_matcher: TargetNodeMatcher = make_target_node_matcher(
+        {"id": PropertyRef("deployment_id")},
+    )
+    source_node_label: str = "GitHubUser"
+    source_node_matcher: SourceNodeMatcher = make_source_node_matcher(
+        {"username": PropertyRef("deployer_username")},
+    )
+    direction: LinkDirection = LinkDirection.OUTWARD
+    rel_label: str = "TRIGGERED_BY"
+    properties: NaisDeploymentToGitHubUserRelProperties = (
+        NaisDeploymentToGitHubUserRelProperties()
     )
