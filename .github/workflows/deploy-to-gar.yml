@@ -3,7 +3,9 @@ name: Build and push Docker image to GAR
 on:
   push:
     branches:
+      - master
       - nais-module
+      - github-module
   workflow_dispatch: {}
 
 jobs:
@@ -17,6 +19,18 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Compute image suffix
+        id: suffix
+        run: |
+          branch="${GITHUB_REF_NAME}"
+          if [ "$branch" = "master" ]; then
+            echo "value=" >> "$GITHUB_OUTPUT"
+          else
+            # Replace / with - and convert to lowercase for valid image tag
+            suffix="$(echo "$branch" | tr '/' '-' | tr '[:upper:]' '[:lower:]')"
+            echo "value=-${suffix}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build and push
         uses: nais/docker-build-push@v0
         id: docker-push
@@ -25,6 +39,7 @@ jobs:
           tenant: nav
           dockerfile: nais.Dockerfile
           docker_context: .
+          image_suffix: ${{ steps.suffix.outputs.value }}
           build_args: |
             uid=10001
             gid=10001
