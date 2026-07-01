@@ -24,6 +24,19 @@ PRJ -- RESOURCE --> IP(IP)
 PRJ -- RESOURCE --> LB(LoadBalancer)
 PRJ -- RESOURCE --> FE(LBFrontend)
 PRJ -- RESOURCE --> BE(LBBackend)
+PRJ -- RESOURCE --> DZ(DnsZone)
+PRJ -- RESOURCE --> DR(DnsRecord)
+PRJ -- RESOURCE --> SEC(Secret)
+PRJ -- RESOURCE --> SV(SecretVersion)
+PRJ -- RESOURCE --> KEY(Key)
+PRJ -- RESOURCE --> KC(KapsuleCluster)
+PRJ -- RESOURCE --> KP(KapsulePool)
+PRJ -- RESOURCE --> KN(KapsuleNode)
+PRJ -- RESOURCE --> CRN(ContainerRegistryNamespace)
+PRJ -- RESOURCE --> CRI(ContainerRegistryImage)
+PRJ -- RESOURCE --> RDB(RdbInstance)
+PRJ -- RESOURCE --> RC(RedisCluster)
+PRJ -- RESOURCE --> MGO(MongoDBInstance)
 INS -- MOUNTS --> VOL
 INS -- MEMBER_OF_SCALEWAY_SECURITY_GROUP --> SG
 SGR -- MEMBER_OF_SCALEWAY_SECURITY_GROUP --> SG
@@ -35,6 +48,17 @@ SUB -- HAS --> IP
 LB -- HAS --> FE
 LB -- HAS --> BE
 FE -- ROUTES_TO --> BE
+DZ -- HAS_RECORD --> DR
+SEC -- HAS --> SV
+SEC -- ENCRYPTED_BY --> KEY
+KC -- HAS --> KP
+KC -- HAS --> KN
+KP -- HAS --> KN
+KC -- ATTACHED_TO --> PN
+CRN -- HAS --> CRI
+RDB -- ATTACHED_TO --> PN
+RC -- ATTACHED_TO --> PN
+MGO -- ATTACHED_TO --> PN
 USR -- MEMBER_OF --> GRP(ScalewayGroup)
 APIKEY(ScalewayApiKey) -- OWNED_BY --> USR
 APP -- MEMBER_OF --> GRP(ScalewayGroup)
@@ -807,4 +831,464 @@ A Backend defines a pool of servers and the forwarding / health-check configurat
 - A `LBFrontend` routes to a `LBBackend`
     ```
     (:ScalewayLBFrontend)-[:ROUTES_TO]->(:ScalewayLBBackend)
+    ```
+
+
+### ScalewayDnsZone
+
+Represents a DNS zone managed by Scaleway Domains & DNS. The zone's ID is composed from `{subdomain}.{domain}` (or just `{domain}` for apex zones), which is the value the Scaleway API itself uses as the zone path parameter.
+
+> **Ontology Mapping**: This node has the extra label `DNSZone` to enable cross-platform queries for DNS zones across different systems (e.g., AWSDNSZone, GCPDNSZone).
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Full zone name (`subdomain.domain` or `domain`). |
+| domain     | Apex domain of the zone.                     |
+| subdomain  | Subdomain within the apex (empty for the apex zone itself). |
+| status     | Zone status (`active`, `pending`, `error`, ...). |
+| message    | Status message returned by the API.          |
+| ns         | Authoritative name servers currently configured for the zone. |
+| ns_default | Default Scaleway name servers.               |
+| ns_master  | Master name servers.                         |
+| linked_products | Scaleway products linked to this zone.  |
+| updated_at | Zone last update date.                       |
+| lastupdated | Timestamp of the last update                 |
+
+#### Relationships
+- A `DnsZone` belongs to a `Project`
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayDnsZone)
+    ```
+
+
+### ScalewayDnsRecord
+
+Represents an individual DNS record within a `ScalewayDnsZone`.
+
+> **Ontology Mapping**: This node has the extra label `DNSRecord` to enable cross-platform queries for DNS records across different systems.
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Record unique ID.                            |
+| name       | Record name (relative to its zone).          |
+| type       | Record type (`a`, `aaaa`, `cname`, `mx`, ...). |
+| data       | Record data (target IP, hostname, value, ...). |
+| ttl        | Record TTL in seconds.                       |
+| priority   | Record priority (relevant for MX/SRV).       |
+| comment    | Free-form record comment.                    |
+| updated_at | Record last update date.                     |
+| lastupdated | Timestamp of the last update                 |
+
+#### Relationships
+- A `DnsRecord` belongs to a `Project`
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayDnsRecord)
+    ```
+- A `DnsZone` has `DnsRecord`s
+    ```
+    (:ScalewayDnsZone)-[:HAS_RECORD]->(:ScalewayDnsRecord)
+    ```
+
+
+### ScalewaySecret
+
+Represents a secret managed by Scaleway Secret Manager.
+
+> **Ontology Mapping**: This node has the extra label `Secret` to enable cross-platform queries for secrets across different systems (e.g., AWSSecret, GCPSecretManagerSecret).
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Secret unique ID.                            |
+| name       | Secret name.                                 |
+| status     | Secret status (`ready`, `locked`, ...).      |
+| type       | Secret type (`opaque`, `basic_credentials`, `ssh_key`, ...). |
+| path       | Folder path of the secret.                   |
+| tags       | Secret tags.                                 |
+| version_count | Number of versions on this secret.        |
+| managed    | True if the secret is managed by another Scaleway product. |
+| protected  | True if the secret is protected against deletion. |
+| description | Secret description.                         |
+| region     | Region the secret lives in.                  |
+| key_id     | ID of the Key Manager key encrypting this secret (if any). |
+| used_by    | Scaleway products using this secret.         |
+| deletion_requested_at | Timestamp when deletion was requested. |
+| created_at | Secret creation date.                        |
+| updated_at | Secret last update date.                     |
+| lastupdated | Timestamp of the last update                 |
+
+#### Relationships
+- A `Secret` belongs to a `Project`
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewaySecret)
+    ```
+- A `Secret` may be encrypted by a `Key`
+    ```
+    (:ScalewaySecret)-[:ENCRYPTED_BY]->(:ScalewayKey)
+    ```
+
+
+### ScalewaySecretVersion
+
+Represents a version of a `ScalewaySecret`. The version's ID is composed as `{secret_id}/{revision}` since Scaleway does not expose a provider-side version ID.
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | `{secret_id}/{revision}`.                    |
+| revision   | Monotonic revision number.                   |
+| status     | Version status (`enabled`, `disabled`, `destroyed`, ...). |
+| latest     | True if this version is the latest for its secret. |
+| description | Version description.                        |
+| region     | Region the version lives in.                 |
+| deletion_requested_at | Timestamp when deletion was requested. |
+| deleted_at | Deletion date (when the version is destroyed). |
+| created_at | Version creation date.                       |
+| updated_at | Version last update date.                    |
+| lastupdated | Timestamp of the last update                 |
+
+#### Relationships
+- A `SecretVersion` belongs to a `Project`
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewaySecretVersion)
+    ```
+- A `Secret` has `SecretVersion`s
+    ```
+    (:ScalewaySecret)-[:HAS]->(:ScalewaySecretVersion)
+    ```
+
+
+### ScalewayKey
+
+Represents a Scaleway Key Manager key.
+
+> **Ontology Mapping**: This node has the extra label `EncryptionKey` to enable cross-platform queries for encryption keys across different systems (e.g., AWSKMSKey, GCPCryptoKey).
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Key unique ID.                               |
+| name       | Key name.                                    |
+| description | Key description.                            |
+| state      | Key state (`enabled`, `disabled`, `pending_deletion`, ...). |
+| usage_type | Active key usage category (`symmetric_encryption`, `asymmetric_encryption`, `asymmetric_signing`). |
+| usage_algorithm | Algorithm corresponding to `usage_type` (e.g. `aes_256_gcm`). |
+| origin     | Key material origin (`scaleway_kms`, `external`).  |
+| region     | Region the key lives in.                     |
+| tags       | Key tags.                                    |
+| rotation_count | Number of times the key has been rotated. |
+| protected  | True if the key is protected against deletion. |
+| locked     | True if the key is locked.                   |
+| rotation_period | Automatic rotation period (ISO 8601 duration). |
+| rotation_next_at | Next scheduled rotation timestamp.      |
+| rotated_at | Last rotation date.                          |
+| deletion_requested_at | Timestamp when deletion was requested. |
+| created_at | Key creation date.                           |
+| updated_at | Key last update date.                        |
+| lastupdated | Timestamp of the last update                 |
+
+#### Relationships
+- A `Key` belongs to a `Project`
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayKey)
+    ```
+- A `Secret` may be encrypted by a `Key`
+    ```
+    (:ScalewaySecret)-[:ENCRYPTED_BY]->(:ScalewayKey)
+    ```
+
+
+### ScalewayKapsuleCluster
+
+Represents a Scaleway Kapsule (managed Kubernetes) cluster.
+
+> **Ontology Mapping**: This node has the extra label `ComputeCluster` to enable cross-platform queries for compute clusters across different systems (e.g., EKSCluster, GKECluster, AzureKubernetesCluster).
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Cluster UUID.                                |
+| name       | Cluster name.                                |
+| description | Cluster description.                        |
+| status     | Cluster status (`ready`, `creating`, ...).   |
+| type       | Cluster offer type (e.g. `kapsule`, `multicloud`). |
+| version    | Kubernetes version.                          |
+| cni        | CNI plugin (`cilium`, `calico`, ...).        |
+| cluster_url | API server URL.                             |
+| dns_wildcard | Wildcard DNS name pointing at the cluster. |
+| upgrade_available | True if a newer Kubernetes version is offered. |
+| pod_cidr   | Pod IP range.                                |
+| service_cidr | Service IP range.                          |
+| service_dns_ip | In-cluster DNS service IP.               |
+| private_network_id | ID of the VPC private network this cluster is attached to (if any). |
+| apiserver_cert_sans | Extra SANs added to the apiserver cert. |
+| feature_gates | List of enabled Kubernetes feature gates. |
+| admission_plugins | List of enabled admission plugins.    |
+| tags       | Cluster tags.                                |
+| region     | Region the cluster lives in.                 |
+| created_at | Creation timestamp.                          |
+| updated_at | Last update timestamp.                       |
+| lastupdated | Timestamp of the last update                |
+
+#### Relationships
+- A `KapsuleCluster` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayKapsuleCluster)
+    ```
+- A `KapsuleCluster` may be attached to a `PrivateNetwork`.
+    ```
+    (:ScalewayKapsuleCluster)-[:ATTACHED_TO]->(:ScalewayPrivateNetwork)
+    ```
+- A `KapsuleCluster` has `KapsulePool` and `KapsuleNode` resources.
+    ```
+    (:ScalewayKapsuleCluster)-[:HAS]->(:ScalewayKapsulePool)
+    (:ScalewayKapsuleCluster)-[:HAS]->(:ScalewayKapsuleNode)
+    ```
+
+
+### ScalewayKapsulePool
+
+Represents a Kapsule node pool: a homogeneous group of nodes provisioned for a Kapsule cluster.
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Pool UUID.                                   |
+| name       | Pool name.                                   |
+| status     | Pool status.                                 |
+| version    | Kubernetes version of the pool.              |
+| node_type  | Scaleway instance commercial type used for nodes (e.g. `DEV1-M`). |
+| autoscaling | True if the pool autoscales.                |
+| size       | Current size of the pool.                    |
+| min_size   | Minimum size for autoscaling.                |
+| max_size   | Maximum size for autoscaling.                |
+| container_runtime | Container runtime (`containerd`, ...). |
+| autohealing | True if autohealing is enabled.             |
+| root_volume_type | Root volume type for nodes.             |
+| root_volume_size | Root volume size in bytes.              |
+| public_ip_disabled | True if nodes have no public IP.      |
+| placement_group_id | ID of the placement group, if any.    |
+| security_group_id | Security group applied to the nodes.   |
+| tags       | Pool tags.                                   |
+| zone       | Zone the pool's nodes live in.               |
+| region     | Region the pool lives in.                    |
+| created_at | Creation timestamp.                          |
+| updated_at | Last update timestamp.                       |
+| lastupdated | Timestamp of the last update                |
+
+#### Relationships
+- A `KapsulePool` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayKapsulePool)
+    ```
+- A `KapsulePool` is part of a `KapsuleCluster`.
+    ```
+    (:ScalewayKapsuleCluster)-[:HAS]->(:ScalewayKapsulePool)
+    ```
+- A `KapsulePool` has `KapsuleNode` members.
+    ```
+    (:ScalewayKapsulePool)-[:HAS]->(:ScalewayKapsuleNode)
+    ```
+
+
+### ScalewayKapsuleNode
+
+Represents a single node in a Kapsule pool.
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Node UUID.                                   |
+| name       | Node name.                                   |
+| status     | Node status (`ready`, `not_ready`, ...).     |
+| provider_id | Provider-side identifier for the backing instance (e.g. `scaleway://instance/<zone>/<id>`). |
+| public_ip_v4 | Public IPv4 address.                       |
+| public_ip_v6 | Public IPv6 address.                       |
+| error_message | Last error message reported by the node.  |
+| region     | Region the node lives in.                    |
+| created_at | Creation timestamp.                          |
+| updated_at | Last update timestamp.                       |
+| lastupdated | Timestamp of the last update                |
+
+#### Relationships
+- A `KapsuleNode` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayKapsuleNode)
+    ```
+- A `KapsuleNode` is part of a `KapsulePool` and a `KapsuleCluster`.
+    ```
+    (:ScalewayKapsulePool)-[:HAS]->(:ScalewayKapsuleNode)
+    (:ScalewayKapsuleCluster)-[:HAS]->(:ScalewayKapsuleNode)
+    ```
+
+
+### ScalewayContainerRegistryNamespace
+
+Represents a Scaleway Container Registry namespace (top-level repository scope).
+
+> **Ontology Mapping**: This node has the extra label `ContainerRegistry` to enable cross-platform queries for container registries across different systems (e.g., ECRRepository, GCPArtifactRegistryRepository, GitHubPackage).
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Namespace UUID.                              |
+| name       | Namespace name.                              |
+| description | Namespace description.                      |
+| status     | Namespace status.                            |
+| status_message | Human-readable status message.           |
+| endpoint   | Registry endpoint (e.g. `rg.fr-par.scw.cloud/<name>`). |
+| is_public  | True if the namespace allows unauthenticated reads. |
+| size       | Total size in bytes of stored images.        |
+| image_count | Number of images in the namespace.          |
+| region     | Region the namespace lives in.               |
+| created_at | Creation timestamp.                          |
+| updated_at | Last update timestamp.                       |
+| lastupdated | Timestamp of the last update                |
+
+#### Relationships
+- A `ContainerRegistryNamespace` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayContainerRegistryNamespace)
+    ```
+- A `ContainerRegistryNamespace` has `ContainerRegistryImage` members.
+    ```
+    (:ScalewayContainerRegistryNamespace)-[:HAS]->(:ScalewayContainerRegistryImage)
+    ```
+
+
+### ScalewayContainerRegistryImage
+
+Represents a container image stored in a Container Registry namespace.
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Image UUID.                                  |
+| name       | Image name (without tag).                    |
+| status     | Image status.                                |
+| status_message | Human-readable status message.           |
+| visibility | Per-image visibility (`public`, `private`, `inherit`). Combined with the namespace `is_public` flag to derive effective exposure. |
+| size       | Total image size in bytes.                   |
+| tags       | List of tag names available for this image.  |
+| created_at | Creation timestamp.                          |
+| updated_at | Last update timestamp.                       |
+| lastupdated | Timestamp of the last update                |
+
+#### Relationships
+- A `ContainerRegistryImage` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayContainerRegistryImage)
+    ```
+- A `ContainerRegistryImage` lives in a `ContainerRegistryNamespace`.
+    ```
+    (:ScalewayContainerRegistryNamespace)-[:HAS]->(:ScalewayContainerRegistryImage)
+    ```
+
+
+### ScalewayRdbInstance
+
+Represents a managed PostgreSQL / MySQL database instance (Scaleway "Managed Database for PostgreSQL and MySQL").
+
+> **Ontology Mapping**: This node has the extra label `Database` to enable cross-platform queries for databases across providers (e.g. RDSInstance, GCPCloudSQLInstance, AzureSQLDatabase).
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Instance UUID.                               |
+| name       | Instance name.                               |
+| status     | Instance status (`ready`, `provisioning`, ...). |
+| engine     | Engine and version (e.g. `PostgreSQL-15`, `MySQL-8`). |
+| node_type  | Commercial node type (e.g. `DB-DEV-S`).      |
+| is_ha_cluster | True if the instance runs in high-availability mode. |
+| encryption_at_rest_enabled | True if encryption at rest is enabled. |
+| volume_type | Storage volume type (`lssd`, `bssd`, `sbs_5k`, ...). |
+| volume_size | Storage volume size in bytes.               |
+| backup_schedule_disabled | True if automated backups are disabled. |
+| backup_schedule_retention_days | Backup retention in days, when configured. |
+| backup_same_region | True if backups are stored in the same region as the instance. |
+| tags       | Instance tags.                               |
+| is_public  | True if the instance exposes a publicly reachable endpoint (load balancer or direct access). |
+| public_endpoint_ip | IP of the public endpoint, if any.    |
+| public_endpoint_hostname | Hostname of the public endpoint, if any. |
+| public_endpoint_port | Port of the public endpoint, if any. |
+| private_endpoint_ip | IP of the first private-network endpoint, if any. |
+| private_endpoint_port | Port of the first private-network endpoint, if any. |
+| region     | Region the instance lives in.                |
+| created_at | Creation timestamp.                          |
+| lastupdated | Timestamp of the last update.               |
+
+#### Relationships
+- An `RdbInstance` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayRdbInstance)
+    ```
+- An `RdbInstance` may be attached to one or more `PrivateNetwork`s.
+    ```
+    (:ScalewayRdbInstance)-[:ATTACHED_TO]->(:ScalewayPrivateNetwork)
+    ```
+
+
+### ScalewayRedisCluster
+
+Represents a managed Redis cluster (Scaleway "Managed Database for Redis").
+
+> **Ontology Mapping**: This node has the extra label `Database` to enable cross-platform queries for databases across providers.
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Cluster UUID.                                |
+| name       | Cluster name.                                |
+| status     | Cluster status.                              |
+| version    | Redis version (e.g. `7.0.5`).                |
+| node_type  | Commercial node type.                        |
+| cluster_size | Number of nodes in the cluster.            |
+| tls_enabled | True if TLS is enabled for client traffic.  |
+| user_name  | Default admin user.                          |
+| tags       | Cluster tags.                                |
+| is_public  | True if the cluster exposes a publicly reachable endpoint. |
+| public_endpoint_ip | IP of the public endpoint, if any.    |
+| public_endpoint_port | Port of the public endpoint, if any. |
+| private_endpoint_ip | IP of the first private-network endpoint, if any. |
+| private_endpoint_port | Port of the first private-network endpoint, if any. |
+| zone       | Zone the cluster lives in.                   |
+| created_at | Creation timestamp.                          |
+| updated_at | Last update timestamp.                       |
+| lastupdated | Timestamp of the last update.               |
+
+#### Relationships
+- A `RedisCluster` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayRedisCluster)
+    ```
+- A `RedisCluster` may be attached to one or more `PrivateNetwork`s.
+    ```
+    (:ScalewayRedisCluster)-[:ATTACHED_TO]->(:ScalewayPrivateNetwork)
+    ```
+
+
+### ScalewayMongoDBInstance
+
+Represents a managed MongoDB instance (Scaleway "Managed Database for MongoDB").
+
+> **Ontology Mapping**: This node has the extra label `Database` to enable cross-platform queries for databases across providers.
+
+| Field      | Description                                  |
+|------------|----------------------------------------------|
+| id         | Instance UUID.                               |
+| name       | Instance name.                               |
+| status     | Instance status.                             |
+| version    | MongoDB version (e.g. `7.0`).                |
+| node_type  | Commercial node type.                        |
+| node_amount | Number of nodes in the deployment.          |
+| volume_type | Storage volume type.                        |
+| volume_size | Storage volume size in bytes.               |
+| tags       | Instance tags.                               |
+| is_public  | True if the instance exposes a publicly reachable endpoint. |
+| public_endpoint_dns | DNS record for the public endpoint, if any. |
+| public_endpoint_port | Port of the public endpoint, if any. |
+| private_endpoint_dns | DNS record for the first private-network endpoint, if any. |
+| private_endpoint_port | Port of the first private-network endpoint, if any. |
+| region     | Region the instance lives in.                |
+| created_at | Creation timestamp.                          |
+| lastupdated | Timestamp of the last update.               |
+
+#### Relationships
+- A `MongoDBInstance` belongs to a `Project`.
+    ```
+    (:ScalewayProject)-[:RESOURCE]->(:ScalewayMongoDBInstance)
+    ```
+- A `MongoDBInstance` may be attached to one or more `PrivateNetwork`s.
+    ```
+    (:ScalewayMongoDBInstance)-[:ATTACHED_TO]->(:ScalewayPrivateNetwork)
     ```
