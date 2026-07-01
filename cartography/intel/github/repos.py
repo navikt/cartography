@@ -4,6 +4,8 @@ import json
 import logging
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import as_completed
 from collections import defaultdict
 from collections import namedtuple
 from collections.abc import Callable
@@ -515,7 +517,7 @@ def _fetch_manifests_for_repo(
     """
     Fetch dependency graph manifests for a single repo.
     Returns (repo_url, manifests, cleanup_safe).
-    Designed to be called from worker threads via to_asynchronous().
+    Designed to be called from worker threads via ThreadPoolExecutor.
     """
     repo_name = repo.get("name")
     repo_url = repo.get("url", "")
@@ -591,15 +593,17 @@ def _get_dep_manifests_for_repos(
 
     for i in range(0, len(eligible), parallel_workers):
         batch = eligible[i:i + parallel_workers]
-        batch_results: list[tuple[str, list[Any], bool]] = to_synchronous(
-            *[
-                to_asynchronous(
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            futures = {
+                executor.submit(
                     _fetch_manifests_for_repo,
                     repo, token, api_url, org, skip_archived_repos,
-                )
+                ): repo
                 for repo in batch
+            }
+            batch_results: list[tuple[str, list[Any], bool]] = [
+                f.result() for f in as_completed(futures)
             ]
-        )
         for repo_url, manifests, repo_cleanup_safe in batch_results:
             if not repo_cleanup_safe:
                 failed_count += 1
@@ -634,7 +638,7 @@ def _fetch_collaborators_for_repo(
     """
     Fetch collaborators for a single repo.
     Returns (repo_url, collabs_list).
-    Designed to be called from worker threads via to_asynchronous().
+    Designed to be called from worker threads via ThreadPoolExecutor.
     """
     repo_name = repo["name"]
     repo_url = repo["url"]
@@ -699,12 +703,16 @@ def _get_repo_collaborators_inner_func(
 
     for i in range(0, len(eligible), parallel_workers):
         batch = eligible[i:i + parallel_workers]
-        batch_results: list[tuple[str, list[UserAffiliationAndRepoPermission]]] = to_synchronous(
-            *[
-                to_asynchronous(_fetch_collaborators_for_repo, repo, org, api_url, token, affiliation)
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            futures = {
+                executor.submit(
+                    _fetch_collaborators_for_repo, repo, org, api_url, token, affiliation,
+                ): repo
                 for repo in batch
+            }
+            batch_results: list[tuple[str, list[UserAffiliationAndRepoPermission]]] = [
+                f.result() for f in as_completed(futures)
             ]
-        )
         for repo_url, collabs in batch_results:
             result[repo_url] = collabs
         logger.info(
@@ -918,7 +926,7 @@ def _fetch_rulesets_for_repo(
     """
     Fetch rulesets for a single repo via REST.
     Returns (repo_url, rulesets_dict).
-    Designed to be called from worker threads via to_asynchronous().
+    Designed to be called from worker threads via ThreadPoolExecutor.
     The cache and its lock are shared across workers to de-duplicate org-level ruleset detail fetches.
     """
     repo_name = repo.get("name", "")
@@ -984,15 +992,17 @@ def _get_repo_rulesets_by_url(
 
     for i in range(0, len(eligible), parallel_workers):
         batch = eligible[i:i + parallel_workers]
-        batch_results: list[tuple[str, dict[str, Any]]] = to_synchronous(
-            *[
-                to_asynchronous(
+        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+            futures = {
+                executor.submit(
                     _fetch_rulesets_for_repo,
                     repo, token, base_url, owner, ruleset_detail_cache, cache_lock,
-                )
+                ): repo
                 for repo in batch
+            }
+            batch_results: list[tuple[str, dict[str, Any]]] = [
+                f.result() for f in as_completed(futures)
             ]
-        )
         for repo_url, rulesets_dict in batch_results:
             rulesets_by_url[repo_url] = rulesets_dict
         logger.info(
