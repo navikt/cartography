@@ -2701,6 +2701,7 @@ def sync(
     organization: str,
     github_skip_archived_repo_manifests: bool = False,
     parallel_workers: int = 1,
+    sync_dep_manifests: bool = True,
 ) -> GitHubRepoSyncResult:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -2711,6 +2712,8 @@ def sync(
     :param organization: The organization to query GitHub for
     :param github_skip_archived_repo_manifests: Skip dependency manifest fetch for archived repos.
     :param parallel_workers: Number of parallel workers for per-repo API fetches. Default 1 (sequential).
+    :param sync_dep_manifests: Fetch dependency graph manifests. Set False to skip the slow O(n) manifest
+        phase; use the separate 'dep_manifests' requested-sync value to run it independently.
     :return: Repository and dependency manifest data fetched for this org.
     """
     logger.info("Syncing GitHub repos")
@@ -2794,14 +2797,20 @@ def sync(
     # Fetch dependency graph manifests per-repo to avoid 502s from heavy inline queries
     dep_manifests_by_url: dict[str, dict[str, Any]] = {}
     dep_manifests_cleanup_safe = True
-    dep_manifests_by_url, dep_manifests_cleanup_safe = _get_dep_manifests_for_repos(
-        repos_json,
-        organization,
-        github_url,
-        github_api_key,
-        skip_archived_repos=github_skip_archived_repo_manifests,
-        parallel_workers=parallel_workers,
-    )
+    if sync_dep_manifests:
+        dep_manifests_by_url, dep_manifests_cleanup_safe = _get_dep_manifests_for_repos(
+            repos_json,
+            organization,
+            github_url,
+            github_api_key,
+            skip_archived_repos=github_skip_archived_repo_manifests,
+            parallel_workers=parallel_workers,
+        )
+    else:
+        logger.info(
+            "Skipping dependency manifest fetch for org %s (dep_manifests not in requested syncs).",
+            organization,
+        )
     for repo in repos_json:
         if repo is not None and repo.get("url") in dep_manifests_by_url:
             repo["dependencyGraphManifests"] = dep_manifests_by_url[repo["url"]]

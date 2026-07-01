@@ -6,7 +6,11 @@
 # -------------------
 # users                  - Org members and enterprise owners (GitHubUser nodes)
 # repos                  - Repositories, branch protection rules, rulesets,
-#                          collaborators, and dependency manifests (GitHubRepository, …)
+#                          and collaborators (GitHubRepository, …). Does NOT
+#                          include dependency manifests — use dep_manifests for that.
+# dep_manifests          - Dependency graph manifests and dependency nodes per repo.
+#                          Requires repos to have run first (reads GitHubRepository
+#                          from the graph or same invocation). Slow: O(n repos) GraphQL.
 # personal_access_tokens - Fine-grained and classic PATs approved for the org
 # dependabot_alerts      - All Dependabot alerts for the org (all states)
 # teams                  - Teams with repo permissions, members, and child teams
@@ -17,6 +21,7 @@
 RESOURCE_FUNCTIONS: list[str] = [
     "users",
     "repos",
+    "dep_manifests",
     "personal_access_tokens",
     "dependabot_alerts",
     "teams",

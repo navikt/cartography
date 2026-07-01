@@ -15,13 +15,14 @@ def test_parse_and_validate_github_requested_syncs_with_spaces() -> None:
 
 def test_parse_and_validate_github_requested_syncs_all_resources() -> None:
     all_resources = (
-        "users,repos,personal_access_tokens,dependabot_alerts,"
+        "users,repos,dep_manifests,personal_access_tokens,dependabot_alerts,"
         "teams,actions,commits,packages,supply_chain"
     )
     result = parse_and_validate_github_requested_syncs(all_resources)
     assert result == [
         "users",
         "repos",
+        "dep_manifests",
         "personal_access_tokens",
         "dependabot_alerts",
         "teams",

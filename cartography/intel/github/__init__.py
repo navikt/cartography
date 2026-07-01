@@ -136,6 +136,11 @@ def start_github_ingestion(
             repos=[], manifests=[], manifests_cleanup_safe=True,
         )
         if requested_syncs is None or "repos" in requested_syncs:
+            # dep_manifests is a separate gatable resource; skip it in the repos
+            # phase unless explicitly requested alongside repos or no filter is set.
+            sync_dep_manifests = (
+                requested_syncs is None or "dep_manifests" in requested_syncs
+            )
             repo_sync_result = cartography.intel.github.repos.sync(
                 neo4j_session,
                 common_job_parameters,
@@ -144,6 +149,25 @@ def start_github_ingestion(
                 org_name,
                 config.github_skip_archived_repo_manifests,
                 parallel_workers=config.github_parallel_workers,
+                sync_dep_manifests=sync_dep_manifests,
+            )
+        elif requested_syncs is not None and "dep_manifests" in requested_syncs:
+            # dep_manifests requested without repos in the same run:
+            # GitHubRepository nodes must already exist from a prior repos sync.
+            logger.info(
+                "Running dep_manifests-only sync for org %s "
+                "(GitHubRepository nodes must exist from a prior repos sync).",
+                org_name,
+            )
+            repo_sync_result = cartography.intel.github.repos.sync(
+                neo4j_session,
+                common_job_parameters,
+                token,
+                api_url,
+                org_name,
+                config.github_skip_archived_repo_manifests,
+                parallel_workers=config.github_parallel_workers,
+                sync_dep_manifests=True,
             )
 
         if requested_syncs is None or "personal_access_tokens" in requested_syncs:
@@ -196,6 +220,7 @@ def start_github_ingestion(
                 token,
                 api_url,
                 org_name,
+                parallel_workers=config.github_parallel_workers,
             )
 
         # Sync commit relationships for the configured lookback period.
