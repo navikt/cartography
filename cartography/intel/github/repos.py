@@ -2396,10 +2396,19 @@ def cleanup_github_dependencies(
     Delete stale Dependency nodes and their relationships. Dependency uses
     unscoped cleanup (see GitHubDependencySchema docstring) so this runs once
     per sync cycle alongside the other global resources, not per organization.
+
+    Uses a reduced iterationsize because Dependency is a globally shared node:
+    a single stale Dependency can have many REQUIRES (repo) and HAS_DEP
+    (manifest) relationships attached. DETACH DELETE-ing the default 10,000
+    nodes per transaction can pull in enough relationships to exceed Neo4j's
+    dbms.memory.transaction.total.max limit (observed in production as
+    Neo.TransientError.General.MemoryPoolOutOfMemoryError).
     """
-    GraphJob.from_node_schema(GitHubDependencySchema(), common_job_parameters).run(
-        neo4j_session
-    )
+    GraphJob.from_node_schema(
+        GitHubDependencySchema(),
+        common_job_parameters,
+        iterationsize=500,
+    ).run(neo4j_session)
 
 
 @timeit
@@ -2413,11 +2422,20 @@ def cleanup_github_manifests(
     :param neo4j_session: Neo4j session
     :param common_job_parameters: Common job parameters containing UPDATE_TAG
     :param owner_org_id: URL of the owning GitHub organization
+
+    Uses a reduced iterationsize because a single manifest can have hundreds
+    of HAS_DEP relationships to Dependency nodes (some observed manifests in
+    production have 700-800+ dependencies). DETACH DELETE-ing the default
+    10,000 manifests per transaction can pull in millions of relationships,
+    exceeding Neo4j's dbms.memory.transaction.total.max limit (observed in
+    production as Neo.TransientError.General.MemoryPoolOutOfMemoryError).
     """
     cleanup_params = {**common_job_parameters, "owner_org_id": owner_org_id}
-    GraphJob.from_node_schema(DependencyGraphManifestSchema(), cleanup_params).run(
-        neo4j_session
-    )
+    GraphJob.from_node_schema(
+        DependencyGraphManifestSchema(),
+        cleanup_params,
+        iterationsize=500,
+    ).run(neo4j_session)
 
 
 @timeit
