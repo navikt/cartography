@@ -143,6 +143,7 @@ def start_github_ingestion(
                 api_url,
                 org_name,
                 config.github_skip_archived_repo_manifests,
+                parallel_workers=config.github_parallel_workers,
             )
 
         if requested_syncs is None or "personal_access_tokens" in requested_syncs:

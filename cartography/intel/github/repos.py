@@ -2,6 +2,7 @@ import configparser
 import hashlib
 import json
 import logging
+import threading
 import time
 from collections import defaultdict
 from collections import namedtuple
@@ -56,6 +57,8 @@ from cartography.models.github.rulesets import GitHubRulesetSchema
 from cartography.util import retries_with_backoff
 from cartography.util import run_analysis_job
 from cartography.util import timeit
+from cartography.util import to_asynchronous
+from cartography.util import to_synchronous
 
 logger = logging.getLogger(__name__)
 
@@ -502,12 +505,44 @@ def _get_repo_dep_manifests(
     return manifests, cleanup_safe
 
 
+def _fetch_manifests_for_repo(
+    repo: dict[str, Any],
+    token: str,
+    api_url: str,
+    org: str,
+    skip_archived_repos: bool,
+) -> tuple[str, list[Any], bool]:
+    """
+    Fetch dependency graph manifests for a single repo.
+    Returns (repo_url, manifests, cleanup_safe).
+    Designed to be called from worker threads via to_asynchronous().
+    """
+    repo_name = repo.get("name")
+    repo_url = repo.get("url", "")
+    if skip_archived_repos and repo.get("isArchived"):
+        logger.debug("Skipping dependency manifest fetch for archived repo %s.", repo_name)
+        return repo_url, [], True
+    try:
+        manifests, repo_cleanup_safe = _get_repo_dep_manifests(token, api_url, org, str(repo_name))
+        if manifests:
+            logger.debug("Fetched %d dependency manifests for repo %s.", len(manifests), repo_name)
+        return repo_url, manifests, repo_cleanup_safe
+    except requests.exceptions.RequestException:
+        logger.warning(
+            "Failed to fetch dependency manifests for repo %s; skipping.",
+            repo_name,
+            exc_info=True,
+        )
+        return repo_url, [], False
+
+
 def _get_dep_manifests_for_repos(
     repo_raw_data: list[dict[str, Any] | None],
     org: str,
     api_url: str,
     token: str,
     skip_archived_repos: bool = False,
+    parallel_workers: int = 1,
 ) -> tuple[dict[str, dict[str, Any]], bool]:
     """
     For every repo in the given list, retrieve its dependency graph manifests individually.
@@ -517,6 +552,8 @@ def _get_dep_manifests_for_repos(
     :param org: The name of the target Github organization as string.
     :param api_url: The Github v4 API endpoint as string.
     :param token: The Github API token as string.
+    :param skip_archived_repos: Skip archived repos if True.
+    :param parallel_workers: Number of repos to fetch concurrently. Default 1 (sequential).
     :return: A tuple of repo URL to dependencyGraphManifests structure and
         whether manifest cleanup is safe.
     """
@@ -527,80 +564,107 @@ def _get_dep_manifests_for_repos(
         archived_count = sum(1 for repo in non_null_repos if repo.get("isArchived"))
         logger.info(
             "Fetching dependency graph manifests for org %s: %d total repos, "
-            "skipping %d archived, fetching for %d.",
+            "skipping %d archived, fetching for %d (parallel_workers=%d).",
             org,
             total_repos,
             archived_count,
             total_repos - archived_count,
+            parallel_workers,
         )
     else:
         logger.info(
-            "Fetching dependency graph manifests for %d repos in org %s.",
+            "Fetching dependency graph manifests for %d repos in org %s (parallel_workers=%d).",
             total_repos,
             org,
+            parallel_workers,
         )
 
     result: dict[str, dict[str, Any]] = {}
     failed_count = 0
     cleanup_safe = True
-    processed_repos = 0
 
-    for repo in repo_raw_data:
-        if repo is None:
-            continue
-        repo_name = repo.get("name")
-        repo_url = repo.get("url")
-        if not repo_name or not repo_url:
-            continue
-        if skip_archived_repos and repo.get("isArchived"):
-            logger.debug(
-                "Skipping dependency manifest fetch for archived repo %s.",
-                repo_name,
-            )
-            continue
-        processed_repos += 1
-        if processed_repos == 1 or processed_repos % 100 == 0:
-            logger.info(
-                "Dependency manifest progress for org %s: repo %d/%d (%s)",
-                org,
-                processed_repos,
-                total_repos,
-                repo_name,
-            )
+    eligible = [
+        repo for repo in non_null_repos
+        if repo.get("name") and repo.get("url")
+        and not (skip_archived_repos and repo.get("isArchived"))
+    ]
 
-        try:
-            manifests, repo_cleanup_safe = _get_repo_dep_manifests(
-                token,
-                api_url,
-                org,
-                repo_name,
-            )
+    for i in range(0, len(eligible), parallel_workers):
+        batch = eligible[i:i + parallel_workers]
+        batch_results: list[tuple[str, list[Any], bool]] = to_synchronous(
+            *[
+                to_asynchronous(
+                    _fetch_manifests_for_repo,
+                    repo, token, api_url, org, skip_archived_repos,
+                )
+                for repo in batch
+            ]
+        )
+        for repo_url, manifests, repo_cleanup_safe in batch_results:
+            if not repo_cleanup_safe:
+                failed_count += 1
             cleanup_safe = cleanup_safe and repo_cleanup_safe
             if manifests:
                 result[repo_url] = {"nodes": manifests}
-                logger.debug(
-                    "Fetched %d dependency manifests for repo %s.",
-                    len(manifests),
-                    repo_name,
-                )
-        except requests.exceptions.RequestException:
-            failed_count += 1
-            cleanup_safe = False
-            logger.warning(
-                "Failed to fetch dependency manifests for repo %s; skipping.",
-                repo_name,
-                exc_info=True,
-            )
+        logger.info(
+            "Dep manifests progress for org %s: %d/%d repos completed.",
+            org,
+            min(i + parallel_workers, len(eligible)),
+            len(eligible),
+        )
 
     if failed_count > 0:
         logger.warning(
             "Skipped dependency manifests for %d of %d repos in org %s due to fetch errors.",
             failed_count,
-            len(repo_raw_data),
+            len(eligible),
             org,
         )
     logger.debug("Fetched dependency manifests for %d repos.", len(result))
     return result, cleanup_safe
+
+
+def _fetch_collaborators_for_repo(
+    repo: dict[str, Any],
+    org: str,
+    api_url: str,
+    token: str,
+    affiliation: str,
+) -> tuple[str, list[UserAffiliationAndRepoPermission]]:
+    """
+    Fetch collaborators for a single repo.
+    Returns (repo_url, collabs_list).
+    Designed to be called from worker threads via to_asynchronous().
+    """
+    repo_name = repo["name"]
+    repo_url = repo["url"]
+
+    direct_info = repo.get("directCollaborators")
+    outside_info = repo.get("outsideCollaborators")
+
+    if affiliation == "OUTSIDE":
+        total_outside = 0 if not outside_info else outside_info.get("totalCount", 0)
+        if total_outside == 0:
+            return repo_url, []
+    else:  # DIRECT
+        total_direct = 0 if not direct_info else direct_info.get("totalCount", 0)
+        if total_direct == 0:
+            return repo_url, []
+
+    logger.info("Loading %s collaborators for repo %s.", affiliation, repo_name)
+    collaborators = _get_repo_collaborators(token, api_url, org, repo_name, affiliation)
+
+    collab_users: list[dict[str, Any]] = []
+    collab_permission: list[str] = []
+    for collab in collaborators.nodes or []:
+        collab_users.append(collab)
+    for perm in collaborators.edges or []:
+        collab_permission.append(perm["permission"])
+
+    return repo_url, [
+        UserAffiliationAndRepoPermission(user, permission, affiliation)
+        for user, permission in zip(collab_users, collab_permission)
+    ]
 
 
 def _get_repo_collaborators_inner_func(
@@ -609,62 +673,48 @@ def _get_repo_collaborators_inner_func(
     token: str,
     repo_raw_data: list[dict[str, Any] | None],
     affiliation: str,
+    parallel_workers: int = 1,
 ) -> dict[str, list[UserAffiliationAndRepoPermission]]:
     result: dict[str, list[UserAffiliationAndRepoPermission]] = {}
 
-    for repo in repo_raw_data:
-        # GitHub can return null repo entries. See issues #1334 and #1404.
-        if repo is None:
-            logger.info(
-                "Skipping null repository entry while fetching %s collaborators.",
-                affiliation,
-            )
-            continue
-        repo_name = repo["name"]
-        repo_url = repo["url"]
-
-        # Guard against None when collaborator fields are not accessible due to permissions.
-        direct_info = repo.get("directCollaborators")
-        outside_info = repo.get("outsideCollaborators")
-
-        if affiliation == "OUTSIDE":
-            total_outside = 0 if not outside_info else outside_info.get("totalCount", 0)
-            if total_outside == 0:
-                # No outside collaborators or not permitted to view; skip API calls for this repo.
-                result[repo_url] = []
-                continue
-        else:  # DIRECT
-            total_direct = 0 if not direct_info else direct_info.get("totalCount", 0)
-            if total_direct == 0:
-                # No direct collaborators or not permitted to view; skip API calls for this repo.
-                result[repo_url] = []
-                continue
-
-        logger.info(f"Loading {affiliation} collaborators for repo {repo_name}.")
-        collaborators = _get_repo_collaborators(
-            token,
-            api_url,
-            org,
-            repo_name,
+    eligible = [
+        repo for repo in repo_raw_data
+        if repo is not None and repo.get("name") and repo.get("url")
+    ]
+    skipped_null = len(repo_raw_data) - len([r for r in repo_raw_data if r is not None])
+    if skipped_null:
+        logger.info(
+            "Skipping %d null repository entries while fetching %s collaborators.",
+            skipped_null,
             affiliation,
         )
 
-        collab_users: List[dict[str, Any]] = []
-        collab_permission: List[str] = []
+    logger.info(
+        "Fetching %s collaborators for %d repos in org %s (parallel_workers=%d).",
+        affiliation,
+        len(eligible),
+        org,
+        parallel_workers,
+    )
 
-        # nodes and edges are expected to always be present given that we only call for them if totalCount is > 0
-        # however sometimes GitHub returns None, as in issue 1334 and 1404.
-        for collab in collaborators.nodes or []:
-            collab_users.append(collab)
+    for i in range(0, len(eligible), parallel_workers):
+        batch = eligible[i:i + parallel_workers]
+        batch_results: list[tuple[str, list[UserAffiliationAndRepoPermission]]] = to_synchronous(
+            *[
+                to_asynchronous(_fetch_collaborators_for_repo, repo, org, api_url, token, affiliation)
+                for repo in batch
+            ]
+        )
+        for repo_url, collabs in batch_results:
+            result[repo_url] = collabs
+        logger.info(
+            "Collaborators (%s) progress for org %s: %d/%d repos completed.",
+            affiliation,
+            org,
+            min(i + parallel_workers, len(eligible)),
+            len(eligible),
+        )
 
-        # The `or []` is because `.edges` can be None.
-        for perm in collaborators.edges or []:
-            collab_permission.append(perm["permission"])
-
-        result[repo_url] = [
-            UserAffiliationAndRepoPermission(user, permission, affiliation)
-            for user, permission in zip(collab_users, collab_permission)
-        ]
     return result
 
 
@@ -674,6 +724,7 @@ def _get_repo_collaborators_for_multiple_repos(
     org: str,
     api_url: str,
     token: str,
+    parallel_workers: int = 1,
 ) -> dict[str, list[UserAffiliationAndRepoPermission]]:
     """
     For every repo in the given list, retrieve the collaborators.
@@ -683,10 +734,13 @@ def _get_repo_collaborators_for_multiple_repos(
     :param org: The name of the target Github organization as string.
     :param api_url: The Github v4 API endpoint as string.
     :param token: The Github API token as string.
+    :param parallel_workers: Number of repos to fetch concurrently. Default 1 (sequential).
     :return: A dictionary of repo URL to list of UserAffiliationAndRepoPermission
     """
     logger.info(
-        f'Retrieving repo collaborators for affiliation "{affiliation}" on org "{org}".',
+        'Retrieving repo collaborators for affiliation "%s" on org "%s".',
+        affiliation,
+        org,
     )
 
     result: dict[str, list[UserAffiliationAndRepoPermission]] = retries_with_backoff(
@@ -700,6 +754,7 @@ def _get_repo_collaborators_for_multiple_repos(
         token=token,
         repo_raw_data=repo_raw_data,
         affiliation=affiliation,
+        parallel_workers=parallel_workers,
     )
     return result
 
@@ -852,54 +907,100 @@ def _rest_ruleset_cache_key(ruleset: dict[str, Any]) -> tuple[Any, ...]:
     )
 
 
+def _fetch_rulesets_for_repo(
+    repo: dict[str, Any],
+    token: str,
+    base_url: str,
+    owner: str,
+    cache: dict[tuple[Any, ...], dict[str, Any]],
+    cache_lock: threading.Lock,
+) -> tuple[str, dict[str, Any]]:
+    """
+    Fetch rulesets for a single repo via REST.
+    Returns (repo_url, rulesets_dict).
+    Designed to be called from worker threads via to_asynchronous().
+    The cache and its lock are shared across workers to de-duplicate org-level ruleset detail fetches.
+    """
+    repo_name = repo.get("name", "")
+    repo_url = repo.get("url", "")
+    encoded_repo_name = quote(repo_name, safe="")
+    endpoint = f"/repos/{owner}/{encoded_repo_name}/rulesets"
+    ruleset_summaries = fetch_all_rest_api_pages(
+        token,
+        base_url,
+        endpoint,
+        result_key="rulesets",
+        raise_on_status=(403, 404),
+        params={"per_page": 100, "includes_parents": "true"},
+    )
+    normalized_rulesets = []
+    for ruleset_summary in ruleset_summaries:
+        cache_key = _rest_ruleset_cache_key(ruleset_summary)
+        with cache_lock:
+            ruleset_detail = cache.get(cache_key)
+        if ruleset_detail is None:
+            ruleset_detail = call_github_rest_api(
+                f"{endpoint}/{ruleset_summary['id']}",
+                token,
+                base_url,
+                params={"includes_parents": "true"},
+            )
+            with cache_lock:
+                cache[cache_key] = ruleset_detail
+        normalized_rulesets.append(_normalize_rest_ruleset(ruleset_detail))
+    return repo_url, {
+        "nodes": normalized_rulesets,
+        "totalCount": len(normalized_rulesets),
+    }
+
+
 def _get_repo_rulesets_by_url(
     token: str,
     api_url: str,
     organization: str,
     repo_raw_data: list[dict[str, Any] | None],
+    parallel_workers: int = 1,
 ) -> dict[str, dict[str, Any]]:
     """
     Retrieve full GitHub repository rulesets through REST for every repo.
+    :param parallel_workers: Number of repos to fetch concurrently. Default 1 (sequential).
     """
     base_url = rest_api_base_url(api_url)
     owner = quote(organization, safe="")
     rulesets_by_url: dict[str, dict[str, Any]] = {}
     ruleset_detail_cache: dict[tuple[Any, ...], dict[str, Any]] = {}
+    cache_lock = threading.Lock()
 
-    for repo in repo_raw_data:
-        if repo is None:
-            continue
-        repo_name = repo.get("name")
-        repo_url = repo.get("url")
-        if not repo_name or not repo_url:
-            continue
-        encoded_repo_name = quote(repo_name, safe="")
-        endpoint = f"/repos/{owner}/{encoded_repo_name}/rulesets"
-        ruleset_summaries = fetch_all_rest_api_pages(
-            token,
-            base_url,
-            endpoint,
-            result_key="rulesets",
-            raise_on_status=(403, 404),
-            params={"per_page": 100, "includes_parents": "true"},
-        )
-        normalized_rulesets = []
-        for ruleset_summary in ruleset_summaries:
-            cache_key = _rest_ruleset_cache_key(ruleset_summary)
-            ruleset_detail = ruleset_detail_cache.get(cache_key)
-            if ruleset_detail is None:
-                ruleset_detail = call_github_rest_api(
-                    f"{endpoint}/{ruleset_summary['id']}",
-                    token,
-                    base_url,
-                    params={"includes_parents": "true"},
+    eligible = [
+        repo for repo in repo_raw_data
+        if repo is not None and repo.get("name") and repo.get("url")
+    ]
+    logger.info(
+        "Fetching rulesets for %d repos in org %s (parallel_workers=%d).",
+        len(eligible),
+        organization,
+        parallel_workers,
+    )
+
+    for i in range(0, len(eligible), parallel_workers):
+        batch = eligible[i:i + parallel_workers]
+        batch_results: list[tuple[str, dict[str, Any]]] = to_synchronous(
+            *[
+                to_asynchronous(
+                    _fetch_rulesets_for_repo,
+                    repo, token, base_url, owner, ruleset_detail_cache, cache_lock,
                 )
-                ruleset_detail_cache[cache_key] = ruleset_detail
-            normalized_rulesets.append(_normalize_rest_ruleset(ruleset_detail))
-        rulesets_by_url[repo_url] = {
-            "nodes": normalized_rulesets,
-            "totalCount": len(normalized_rulesets),
-        }
+                for repo in batch
+            ]
+        )
+        for repo_url, rulesets_dict in batch_results:
+            rulesets_by_url[repo_url] = rulesets_dict
+        logger.info(
+            "Rulesets progress for org %s: %d/%d repos completed.",
+            organization,
+            min(i + parallel_workers, len(eligible)),
+            len(eligible),
+        )
 
     return rulesets_by_url
 
@@ -962,6 +1063,7 @@ def get_repo_privileged_details_by_url(
     token: str,
     api_url: str,
     organization: str,
+    parallel_workers: int = 1,
 ) -> Dict[str, Dict[str, Any]]:
     """
     Retrieve collaborator counts, branch protection, and ruleset fields for repositories in an organization.
@@ -981,6 +1083,7 @@ def get_repo_privileged_details_by_url(
         api_url,
         organization,
         privileged_nodes,
+        parallel_workers=parallel_workers,
     )
     for repo in privileged_nodes:
         # GitHub can return null repository entries.
@@ -2587,6 +2690,7 @@ def sync(
     github_url: str,
     organization: str,
     github_skip_archived_repo_manifests: bool = False,
+    parallel_workers: int = 1,
 ) -> GitHubRepoSyncResult:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -2596,6 +2700,7 @@ def sync(
     :param github_url: The URL for the GitHub v4 endpoint to use
     :param organization: The organization to query GitHub for
     :param github_skip_archived_repo_manifests: Skip dependency manifest fetch for archived repos.
+    :param parallel_workers: Number of parallel workers for per-repo API fetches. Default 1 (sequential).
     :return: Repository and dependency manifest data fetched for this org.
     """
     logger.info("Syncing GitHub repos")
@@ -2610,6 +2715,7 @@ def sync(
                 github_api_key,
                 github_url,
                 organization,
+                parallel_workers=parallel_workers,
             )
         except (requests.exceptions.RequestException, ValueError):
             rulesets_cleanup_safe = False
@@ -2637,20 +2743,36 @@ def sync(
     direct_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
     outside_collabs: dict[str, list[UserAffiliationAndRepoPermission]] = {}
     try:
-        direct_collabs = _get_repo_collaborators_for_multiple_repos(
-            repos_json,
-            "DIRECT",
-            organization,
-            github_url,
-            github_api_key,
-        )
-        outside_collabs = _get_repo_collaborators_for_multiple_repos(
-            repos_json,
-            "OUTSIDE",
-            organization,
-            github_url,
-            github_api_key,
-        )
+        if parallel_workers > 1:
+            logger.info(
+                "Fetching DIRECT and OUTSIDE collaborators concurrently for org %s.",
+                organization,
+            )
+            direct_collabs, outside_collabs = to_synchronous(
+                to_asynchronous(
+                    _get_repo_collaborators_for_multiple_repos,
+                    repos_json, "DIRECT", organization, github_url, github_api_key, parallel_workers,
+                ),
+                to_asynchronous(
+                    _get_repo_collaborators_for_multiple_repos,
+                    repos_json, "OUTSIDE", organization, github_url, github_api_key, parallel_workers,
+                ),
+            )
+        else:
+            direct_collabs = _get_repo_collaborators_for_multiple_repos(
+                repos_json,
+                "DIRECT",
+                organization,
+                github_url,
+                github_api_key,
+            )
+            outside_collabs = _get_repo_collaborators_for_multiple_repos(
+                repos_json,
+                "OUTSIDE",
+                organization,
+                github_url,
+                github_api_key,
+            )
     except (TypeError, ValueError):
         # TypeError: permission errors or transient network issues
         # ValueError: fetch_all raises this when all retries are exhausted (e.g. repeated timeouts)
@@ -2668,6 +2790,7 @@ def sync(
         github_url,
         github_api_key,
         skip_archived_repos=github_skip_archived_repo_manifests,
+        parallel_workers=parallel_workers,
     )
     for repo in repos_json:
         if repo is not None and repo.get("url") in dep_manifests_by_url:
