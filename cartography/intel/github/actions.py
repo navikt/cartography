@@ -912,25 +912,23 @@ def sync(
     progress_counter: list[int] = [0]
     progress_lock = threading.Lock()
 
-    for i in range(0, total, parallel_workers):
-        batch = repo_names[i:i + parallel_workers]
+    # Submit all repos to a single bounded thread pool up front so idle workers
+    # immediately pick up the next repo instead of waiting for a batch's
+    # slowest straggler (e.g. a repo with many workflows/environments).
+    with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+        futures = {
+            executor.submit(
+                _fetch_actions_for_repo,
+                repo_name, organization, github_api_key, github_url,
+                progress_counter, progress_lock, total,
+            ): repo_name
+            for repo_name in repo_names
+        }
 
-        # Parallel fetch — no Neo4j access in workers
-        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_actions_for_repo,
-                    repo_name, organization, github_api_key, github_url,
-                    progress_counter, progress_lock, total,
-                ): repo_name
-                for repo_name in batch
-            }
-            batch_data: list[_RepoActionsData] = [
-                f.result() for f in as_completed(futures)
-            ]
-
-        # Sequential load — all Neo4j writes on the main thread
-        for d in batch_data:
+        # Sequential load — all Neo4j writes on the main thread, applied as
+        # each repo's fetch completes rather than waiting for a fixed batch.
+        for f in as_completed(futures):
+            d = f.result()
             if d.enriched_workflows:
                 load_workflows(neo4j_session, d.enriched_workflows, update_tag, org_url)
                 all_workflows.extend(d.enriched_workflows)

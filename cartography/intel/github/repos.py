@@ -590,32 +590,32 @@ def _get_dep_manifests_for_repos(
         if repo.get("name") and repo.get("url")
         and not (skip_archived_repos and repo.get("isArchived"))
     ]
+    total = len(eligible)
+    completed = 0
 
-    for i in range(0, len(eligible), parallel_workers):
-        batch = eligible[i:i + parallel_workers]
-        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_manifests_for_repo,
-                    repo, token, api_url, org, skip_archived_repos,
-                ): repo
-                for repo in batch
-            }
-            batch_results: list[tuple[str, list[Any], bool]] = [
-                f.result() for f in as_completed(futures)
-            ]
-        for repo_url, manifests, repo_cleanup_safe in batch_results:
+    with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+        futures = {
+            executor.submit(
+                _fetch_manifests_for_repo,
+                repo, token, api_url, org, skip_archived_repos,
+            ): repo
+            for repo in eligible
+        }
+        for f in as_completed(futures):
+            repo_url, manifests, repo_cleanup_safe = f.result()
             if not repo_cleanup_safe:
                 failed_count += 1
             cleanup_safe = cleanup_safe and repo_cleanup_safe
             if manifests:
                 result[repo_url] = {"nodes": manifests}
-        logger.info(
-            "Dep manifests progress for org %s: %d/%d repos completed.",
-            org,
-            min(i + parallel_workers, len(eligible)),
-            len(eligible),
-        )
+            completed += 1
+            if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
+                logger.info(
+                    "Dep manifests progress for org %s: %d/%d repos completed.",
+                    org,
+                    completed,
+                    total,
+                )
 
     if failed_count > 0:
         logger.warning(
@@ -701,27 +701,28 @@ def _get_repo_collaborators_inner_func(
         parallel_workers,
     )
 
-    for i in range(0, len(eligible), parallel_workers):
-        batch = eligible[i:i + parallel_workers]
-        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_collaborators_for_repo, repo, org, api_url, token, affiliation,
-                ): repo
-                for repo in batch
-            }
-            batch_results: list[tuple[str, list[UserAffiliationAndRepoPermission]]] = [
-                f.result() for f in as_completed(futures)
-            ]
-        for repo_url, collabs in batch_results:
+    total = len(eligible)
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+        futures = {
+            executor.submit(
+                _fetch_collaborators_for_repo, repo, org, api_url, token, affiliation,
+            ): repo
+            for repo in eligible
+        }
+        for f in as_completed(futures):
+            repo_url, collabs = f.result()
             result[repo_url] = collabs
-        logger.info(
-            "Collaborators (%s) progress for org %s: %d/%d repos completed.",
-            affiliation,
-            org,
-            min(i + parallel_workers, len(eligible)),
-            len(eligible),
-        )
+            completed += 1
+            if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
+                logger.info(
+                    "Collaborators (%s) progress for org %s: %d/%d repos completed.",
+                    affiliation,
+                    org,
+                    completed,
+                    total,
+                )
 
     return result
 
@@ -990,27 +991,28 @@ def _get_repo_rulesets_by_url(
         parallel_workers,
     )
 
-    for i in range(0, len(eligible), parallel_workers):
-        batch = eligible[i:i + parallel_workers]
-        with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
-            futures = {
-                executor.submit(
-                    _fetch_rulesets_for_repo,
-                    repo, token, base_url, owner, ruleset_detail_cache, cache_lock,
-                ): repo
-                for repo in batch
-            }
-            batch_results: list[tuple[str, dict[str, Any]]] = [
-                f.result() for f in as_completed(futures)
-            ]
-        for repo_url, rulesets_dict in batch_results:
+    total = len(eligible)
+    completed = 0
+
+    with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
+        futures = {
+            executor.submit(
+                _fetch_rulesets_for_repo,
+                repo, token, base_url, owner, ruleset_detail_cache, cache_lock,
+            ): repo
+            for repo in eligible
+        }
+        for f in as_completed(futures):
+            repo_url, rulesets_dict = f.result()
             rulesets_by_url[repo_url] = rulesets_dict
-        logger.info(
-            "Rulesets progress for org %s: %d/%d repos completed.",
-            organization,
-            min(i + parallel_workers, len(eligible)),
-            len(eligible),
-        )
+            completed += 1
+            if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
+                logger.info(
+                    "Rulesets progress for org %s: %d/%d repos completed.",
+                    organization,
+                    completed,
+                    total,
+                )
 
     return rulesets_by_url
 
