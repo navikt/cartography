@@ -7,6 +7,7 @@ from datetime import datetime
 from datetime import timedelta
 from datetime import timezone as tz
 from typing import Any
+from typing import List
 from typing import NamedTuple
 from urllib.parse import quote
 from urllib.parse import urlsplit
@@ -15,6 +16,31 @@ from urllib.parse import urlunsplit
 import requests
 
 logger = logging.getLogger(__name__)
+
+
+def parse_and_validate_github_requested_syncs(github_requested_syncs: str) -> List[str]:
+    """Parse and validate a comma-separated list of GitHub sub-syncs.
+
+    :param github_requested_syncs: Comma-separated string of resource names.
+    :return: Validated list of resource name strings.
+    :raises ValueError: If any token is not a known GitHub resource name.
+    """
+    from cartography.intel.github.resources import RESOURCE_FUNCTIONS
+
+    validated_resources: List[str] = []
+    for resource in github_requested_syncs.split(","):
+        resource = resource.strip()
+        if resource in RESOURCE_FUNCTIONS:
+            validated_resources.append(resource)
+        else:
+            valid_syncs: str = ", ".join(RESOURCE_FUNCTIONS)
+            raise ValueError(
+                f'Error parsing `github-requested-syncs`. You specified "{github_requested_syncs}". '
+                f"Please check that your string is formatted properly. "
+                f'Example valid input looks like "users,repos,teams" or "repos, actions, packages". '
+                f"Our full list of valid values is: {valid_syncs}.",
+            )
+    return validated_resources
 # Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
 _TIMEOUT = (60, 60)
 

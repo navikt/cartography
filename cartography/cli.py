@@ -10,7 +10,6 @@ import typer
 from typing_extensions import Annotated
 
 from cartography.config import Config
-from cartography.config import GitHubSyncOptions
 from cartography.version import get_release_version_and_commit_revision
 
 if TYPE_CHECKING:
@@ -763,129 +762,18 @@ class CLI:
                     envvar="CARTOGRAPHY_GITHUB_SKIP_ARCHIVED_REPO_MANIFESTS",
                 ),
             ] = False,
-            github_sync_users: Annotated[
-                bool,
+            github_requested_syncs: Annotated[
+                str | None,
                 typer.Option(
-                    "--github-sync-users/--no-github-sync-users",
-                    help="Fetch GitHub organization members and enterprise owners.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_USERS",
-                ),
-            ] = True,
-            github_sync_repos: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-repos/--no-github-sync-repos",
-                    help="Fetch GitHub repositories (base for all repo sub-options).",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPOS",
-                ),
-            ] = True,
-            github_sync_personal_access_tokens: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-personal-access-tokens/--no-github-sync-personal-access-tokens",
-                    help="Fetch fine-grained and classic PATs approved for the org.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_PERSONAL_ACCESS_TOKENS",
-                ),
-            ] = True,
-            github_sync_dependabot_alerts: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-dependabot-alerts/--no-github-sync-dependabot-alerts",
-                    help="Fetch all Dependabot alerts for the org.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_DEPENDABOT_ALERTS",
-                ),
-            ] = True,
-            github_sync_teams: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-teams/--no-github-sync-teams",
-                    help="Fetch teams with repository permissions, members, and child teams.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_TEAMS",
-                ),
-            ] = True,
-            github_sync_actions: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-actions/--no-github-sync-actions",
-                    help="Fetch Actions workflows, secrets, variables, and environments.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_ACTIONS",
-                ),
-            ] = True,
-            github_sync_commits: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-commits/--no-github-sync-commits",
-                    help="Aggregate per-user commit statistics and write COMMITTED_TO relationships.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_COMMITS",
-                ),
-            ] = True,
-            github_sync_packages: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-packages/--no-github-sync-packages",
-                    help="Fetch container packages and the full GHCR image pipeline (manifests, tags, attestations).",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_PACKAGES",
-                ),
-            ] = True,
-            github_sync_supply_chain: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-supply-chain/--no-github-sync-supply-chain",
-                    help="Correlate container images to source repos via SLSA provenance, Dockerfiles, and workflow paths.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_SUPPLY_CHAIN",
-                ),
-            ] = True,
-            github_sync_repo_privileged_details: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-repo-privileged-details/--no-github-sync-repo-privileged-details",
+                    "--github-requested-syncs",
                     help=(
-                        "Fetch per-repo branch protection rules, rulesets, and collaborator counts. "
-                        "Most time-consuming part of repo sync for large orgs (O(n) REST calls)."
+                        "Comma-separated list of GitHub resources to sync. "
+                        'Example: "users,repos,teams". See cartography.intel.github.resources for full list.'
                     ),
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPO_PRIVILEGED_DETAILS",
                 ),
-            ] = True,
-            github_sync_repo_collaborators: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-repo-collaborators/--no-github-sync-repo-collaborators",
-                    help="Fetch DIRECT and OUTSIDE collaborators per repo with their permissions. O(n) API calls.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPO_COLLABORATORS",
-                ),
-            ] = True,
-            github_sync_repo_dependency_manifests: Annotated[
-                bool,
-                typer.Option(
-                    "--github-sync-repo-dependency-manifests/--no-github-sync-repo-dependency-manifests",
-                    help="Fetch dependency graph manifests per repo (package name, URL, package manager). O(n) API calls.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SYNC_REPO_DEPENDENCY_MANIFESTS",
-                ),
-            ] = True,
+            ] = None,
             # =================================================================
             # GitLab Options
             # =================================================================
@@ -2213,6 +2101,14 @@ class CLI:
 
                 parse_and_validate_gcp_requested_syncs(gcp_requested_syncs)
 
+            # Validate GitHub options
+            if github_requested_syncs:
+                from cartography.intel.github.util import (
+                    parse_and_validate_github_requested_syncs,
+                )
+
+                parse_and_validate_github_requested_syncs(github_requested_syncs)
+
             # Read Azure client secret
             azure_client_secret = None
             if azure_sp_auth and azure_client_secret_env_var:
@@ -2757,21 +2653,8 @@ class CLI:
                 okta_saml_role_regex=okta_saml_role_regex,
                 github_config=github_config,
                 github_commit_lookback_days=github_commit_lookback_days,
-                github_skip_archived_repo_manifests=github_skip_archived_repo_manifests,
-                github_sync_options=GitHubSyncOptions(
-                    users=github_sync_users,
-                    repos=github_sync_repos,
-                    personal_access_tokens=github_sync_personal_access_tokens,
-                    dependabot_alerts=github_sync_dependabot_alerts,
-                    teams=github_sync_teams,
-                    actions=github_sync_actions,
-                    commits=github_sync_commits,
-                    packages=github_sync_packages,
-                    supply_chain=github_sync_supply_chain,
-                    repo_privileged_details=github_sync_repo_privileged_details,
-                    repo_collaborators=github_sync_repo_collaborators,
-                    repo_dependency_manifests=github_sync_repo_dependency_manifests,
-                ),
+                 github_skip_archived_repo_manifests=github_skip_archived_repo_manifests,
+                 github_requested_syncs=github_requested_syncs,
                 digitalocean_token=digitalocean_token,
                 permission_relationships_file=permission_relationships_file,
                 azure_permission_relationships_file=azure_permission_relationships_file,

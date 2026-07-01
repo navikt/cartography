@@ -1,183 +1,5 @@
 from __future__ import annotations
 
-import dataclasses
-import enum
-
-
-class GitHubDataSource(str, enum.Enum):
-    """Selectable GitHub data sources for ``--github-data-sources``.
-
-    Each member corresponds to one sub-sync inside ``start_github_ingestion``.
-    Pass one or more comma-separated values to restrict which data is fetched.
-    Defaults to all sources when not specified.
-
-    Members
-    -------
-    USERS
-        Fetches all organization members (login, name, email, 2FA status, role)
-        via GraphQL ``membersWithRole`` and enterprise owners via
-        ``enterpriseOwners``. Creates ``GitHubUser`` nodes with ``MEMBER_OF``,
-        ``ADMIN_OF``, and ``UNAFFILIATED`` relationships to the
-        ``GitHubOrganization``.
-
-    REPOS
-        Fetches all repositories via GraphQL (name, URLs, visibility, default
-        branch, languages, owner). A second privileged query retrieves per-repo
-        collaborator counts, branch protection rules, and REST rulesets. Also
-        fetches dependency graph manifests per repo (manifest path, package
-        name, package URL, package manager) and collaborator users with their
-        permissions (ADMIN/MAINTAIN/READ/TRIAGE/WRITE) for both DIRECT and
-        OUTSIDE affiliations. Creates ``GitHubRepository``, ``GitHubBranch``,
-        ``ProgrammingLanguage``, ``GitHubPythonLibrary``,
-        ``DependencyGraphManifest``, ``GitHubDependency``,
-        ``GitHubBranchProtectionRule``, ``GitHubRuleset``, and
-        ``GitHubRulesetRule`` nodes.
-
-    PERSONAL_ACCESS_TOKENS
-        Fetches fine-grained PATs approved for the org via REST
-        ``/orgs/{org}/personal-access-tokens`` (ID, name, owner, permissions,
-        repo scope, timestamps) and per-PAT repository access lists. Also
-        fetches classic PAT metadata for SAML SSO orgs via
-        ``/orgs/{org}/credential-authorizations``. Creates
-        ``GitHubPersonalAccessToken`` nodes linked to the org and optionally to
-        ``GitHubRepository`` nodes via ``CAN_ACCESS``.
-
-    DEPENDABOT_ALERTS
-        Fetches all Dependabot alerts for the org via REST
-        ``/orgs/{org}/dependabot/alerts`` (all states), including package name,
-        ecosystem, severity, CVSS/EPSS scores, CVE/GHSA IDs, CWE IDs, affected
-        version range, patched version, dismissal metadata, and linked
-        repository. Creates ``GitHubDependabotAlert`` nodes linked to
-        ``GitHubOrganization`` and ``GitHubRepository``.
-
-    TEAMS
-        Fetches all teams via GraphQL (slug, URL, description, counts), then
-        per-team fetches repository permissions, member roles
-        (MEMBER/MAINTAINER), and child teams. Creates ``GitHubTeam`` nodes with
-        relationships to ``GitHubRepository``, ``GitHubUser``, and child
-        ``GitHubTeam`` nodes.
-
-    ACTIONS
-        Fetches org-level Actions secrets and variables, then per repo fetches
-        workflow YAML files (parsing triggers, permissions, secret references,
-        environment variables, and referenced Actions), deployment environments,
-        and repo/environment-level secrets and variables. Creates
-        ``GitHubWorkflow``, ``GitHubEnvironment``, ``GitHubActionsSecret``,
-        ``GitHubActionsVariable``, and ``GitHubAction`` nodes.
-
-    COMMITS
-        For each repository in the graph, fetches commits on the default branch
-        within the configured lookback window via GraphQL ``history``
-        (committed date and author URL). Does not create individual commit
-        nodes; instead creates or updates aggregate ``COMMITTED_TO``
-        relationships between ``GitHubUser`` and ``GitHubRepository`` carrying
-        total commit count, first commit date, and last commit date.
-
-    PACKAGES
-        Fetches all container-type packages owned by the org via REST
-        ``/orgs/{org}/packages?package_type=container`` (name, visibility,
-        GHCR URI, linked repository, timestamps). Creates ``GitHubPackage``
-        nodes linked to the org and optionally to ``GitHubRepository`` via
-        ``HAS_PACKAGE``. Also drives the GHCR image pipeline: fetches OCI
-        manifest and image config per package version to create
-        ``GitHubContainerImage`` and ``GitHubContainerImageLayer`` nodes, loads
-        ``GitHubContainerImageTag`` nodes, and fetches SLSA attestations per
-        digest to create ``GitHubContainerImageAttestation`` nodes enriching
-        images with provenance data.
-
-    SUPPLY_CHAIN
-        Reads already-ingested graph nodes to establish provenance relationships
-        between container images and source repositories using four strategies:
-        workflow-path overlap (``PACKAGED_BY`` to ``GitHubWorkflow``), SLSA
-        provenance ``source_uri`` matching, Dockerfile parsing via GitHub Code
-        Search and Contents APIs, and a package-owner fallback. Requires
-        PACKAGES to have run first in the same sync cycle.
-    """
-
-    USERS = "users"
-    REPOS = "repos"
-    PERSONAL_ACCESS_TOKENS = "personal_access_tokens"
-    DEPENDABOT_ALERTS = "dependabot_alerts"
-    TEAMS = "teams"
-    ACTIONS = "actions"
-    COMMITS = "commits"
-    PACKAGES = "packages"
-    SUPPLY_CHAIN = "supply_chain"
-
-    @classmethod
-    def all(cls) -> set[GitHubDataSource]:
-        return set(cls)
-
-
-@dataclasses.dataclass
-class GitHubSyncOptions:
-    """Fine-grained on/off switches for the GitHub sync.
-
-    Every flag defaults to ``True`` (all data fetched). Set a flag to ``False``
-    to skip that sub-sync while keeping everything else enabled.
-
-    Top-level data sources
-    ----------------------
-    users : bool
-        Fetch organization members and enterprise owners. Creates
-        ``GitHubUser`` nodes with ``MEMBER_OF`` / ``ADMIN_OF`` /
-        ``UNAFFILIATED`` relationships.
-    repos : bool
-        Fetch all repositories. Base for all repo sub-options below.
-    personal_access_tokens : bool
-        Fetch fine-grained and classic PATs approved for the org.
-    dependabot_alerts : bool
-        Fetch all Dependabot alerts (all states) for the org.
-    teams : bool
-        Fetch teams with their repository permissions, members, and child
-        teams.
-    actions : bool
-        Fetch Actions workflows (parsed YAML), secrets, variables, and
-        deployment environments at org, repo, and environment scope.
-    commits : bool
-        Aggregate per-(user, repo) commit statistics for the configured
-        lookback window and write ``COMMITTED_TO`` relationships.
-    packages : bool
-        Fetch container packages and drive the full GHCR image pipeline:
-        OCI manifests, image configs, layer data, tags, and SLSA
-        attestations.
-    supply_chain : bool
-        Correlate container images to source repositories using workflow
-        paths, SLSA provenance, Dockerfile parsing, and package-owner
-        fallback. Requires ``packages=True`` in the same sync cycle.
-
-    Repo sub-options (only relevant when ``repos=True``)
-    ----------------------------------------------------
-    repo_privileged_details : bool
-        Second GraphQL pass to fetch per-repo collaborator counts, branch
-        protection rules, and a REST call per repo for rulesets. This is
-        the most time-consuming part of the repo sync for large orgs
-        (~131 extra GraphQL pages + O(n) REST calls for 6 500 repos).
-    repo_collaborators : bool
-        Per-repo GraphQL calls to fetch DIRECT and OUTSIDE collaborators
-        with their permissions. O(n) API calls.
-    repo_dependency_manifests : bool
-        Per-repo GraphQL calls to fetch dependency graph manifests
-        (package name, URL, package manager). O(n) API calls. Archived
-        repos are always skipped regardless of this flag.
-    """
-
-    # Top-level data sources
-    users: bool = True
-    repos: bool = True
-    personal_access_tokens: bool = True
-    dependabot_alerts: bool = True
-    teams: bool = True
-    actions: bool = True
-    commits: bool = True
-    packages: bool = True
-    supply_chain: bool = True
-
-    # Repo sub-options
-    repo_privileged_details: bool = True
-    repo_collaborators: bool = True
-    repo_dependency_manifests: bool = True
-
 
 def _resolve_report_source_config(
     *,
@@ -306,8 +128,8 @@ class Config:
     :param github_commit_lookback_days: Number of days to look back for GitHub commit tracking. Optional.
     :type github_skip_archived_repo_manifests: bool
     :param github_skip_archived_repo_manifests: Skip dependency manifest fetching for archived GitHub repos. Optional.
-    :type github_sync_options: GitHubSyncOptions
-    :param github_sync_options: Fine-grained on/off switches for the GitHub sync. Defaults to all sources enabled.
+    :type github_requested_syncs: str
+    :param github_requested_syncs: Comma-separated list of GitHub resources to sync. Optional.
     :type digitalocean_token: str
     :param digitalocean_token: DigitalOcean access token. Optional.
     :type permission_relationships_file: str
@@ -564,7 +386,7 @@ class Config:
         github_config=None,
         github_commit_lookback_days=30,
         github_skip_archived_repo_manifests=False,
-        github_sync_options=None,
+        github_requested_syncs=None,
         digitalocean_token=None,
         permission_relationships_file=None,
         azure_permission_relationships_file=None,
@@ -740,9 +562,7 @@ class Config:
         self.github_config = github_config
         self.github_commit_lookback_days = github_commit_lookback_days
         self.github_skip_archived_repo_manifests = github_skip_archived_repo_manifests
-        self.github_sync_options: GitHubSyncOptions = (
-            github_sync_options or GitHubSyncOptions()
-        )
+        self.github_requested_syncs = github_requested_syncs
         self.digitalocean_token = digitalocean_token
         self.permission_relationships_file = permission_relationships_file
         self.azure_permission_relationships_file = azure_permission_relationships_file

@@ -21,8 +21,8 @@ import cartography.intel.github.teams
 import cartography.intel.github.users
 from cartography.client.core.tx import read_list_of_values_tx
 from cartography.config import Config
-from cartography.config import GitHubSyncOptions
 from cartography.intel.github.app_auth import make_credential
+from cartography.intel.github.util import parse_and_validate_github_requested_syncs
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -85,7 +85,7 @@ def start_github_ingestion(
     skip_unscoped_cleanup: bool = False,
 ) -> None:
     """
-    If this module is configured, perform ingestion of Github  data. Otherwise warn and exit
+    If this module is configured, perform ingestion of Github data. Otherwise warn and exit.
     :param neo4j_session: Neo4J session for database interface
     :param config: A cartography.config object
     :param skip_unscoped_cleanup: Skip cleanup of GitHub resources that are not
@@ -105,7 +105,13 @@ def start_github_ingestion(
         "UPDATE_TAG": config.update_tag,
     }
     processed_any_org = False
-    opts: GitHubSyncOptions = config.github_sync_options
+
+    # Parse requested syncs once; None means all resources.
+    requested_syncs: set[str] | None = None
+    if config.github_requested_syncs:
+        requested_syncs = set(
+            parse_and_validate_github_requested_syncs(config.github_requested_syncs),
+        )
 
     # run sync for the provided github organizations
     for auth_data in auth_tokens["organization"]:
@@ -116,8 +122,8 @@ def start_github_ingestion(
         # credential is a GitHubCredential (duck-typed as str by _resolve_token in util.py)
         token: Any = credential
 
-        github_users = []
-        if opts.users:
+        github_users: list[Any] = []
+        if requested_syncs is None or "users" in requested_syncs:
             github_users = cartography.intel.github.users.sync(
                 neo4j_session,
                 common_job_parameters,
@@ -125,10 +131,11 @@ def start_github_ingestion(
                 api_url,
                 org_name,
             )
+
         repo_sync_result = cartography.intel.github.repos.GitHubRepoSyncResult(
             repos=[], manifests=[], manifests_cleanup_safe=True,
         )
-        if opts.repos:
+        if requested_syncs is None or "repos" in requested_syncs:
             repo_sync_result = cartography.intel.github.repos.sync(
                 neo4j_session,
                 common_job_parameters,
@@ -136,9 +143,9 @@ def start_github_ingestion(
                 api_url,
                 org_name,
                 config.github_skip_archived_repo_manifests,
-                sync_options=opts,
             )
-        if opts.personal_access_tokens:
+
+        if requested_syncs is None or "personal_access_tokens" in requested_syncs:
             cartography.intel.github.personal_access_tokens.sync(
                 neo4j_session,
                 common_job_parameters,
@@ -146,7 +153,8 @@ def start_github_ingestion(
                 api_url,
                 org_name,
             )
-        if opts.dependabot_alerts:
+
+        if requested_syncs is None or "dependabot_alerts" in requested_syncs:
             cartography.intel.github.dependabot_alerts.sync(
                 neo4j_session,
                 common_job_parameters,
@@ -154,8 +162,9 @@ def start_github_ingestion(
                 api_url,
                 org_name,
             )
+
         github_teams: list[Any] = []
-        if opts.teams:
+        if requested_syncs is None or "teams" in requested_syncs:
             github_teams = cartography.intel.github.teams.sync_github_teams(
                 neo4j_session,
                 common_job_parameters,
@@ -163,6 +172,7 @@ def start_github_ingestion(
                 api_url,
                 org_name,
             )
+
         cartography.intel.github.codeowners.sync(
             neo4j_session,
             common_job_parameters,
@@ -178,7 +188,7 @@ def start_github_ingestion(
 
         # Sync GitHub Actions (workflows, secrets, variables, environments)
         all_workflows: list[Any] = []
-        if opts.actions:
+        if requested_syncs is None or "actions" in requested_syncs:
             all_workflows = cartography.intel.github.actions.sync(
                 neo4j_session,
                 common_job_parameters,
@@ -187,11 +197,10 @@ def start_github_ingestion(
                 org_name,
             )
 
-        # Sync commit relationships for the configured lookback period
-        # Get repo names from the graph instead of making another API call
-        if opts.commits:
+        # Sync commit relationships for the configured lookback period.
+        # Get repo names from the graph instead of making another API call.
+        if requested_syncs is None or "commits" in requested_syncs:
             repo_names = _get_repos_from_graph(neo4j_session, org_name)
-
             cartography.intel.github.commits.sync_github_commits(
                 neo4j_session,
                 token,
@@ -202,22 +211,17 @@ def start_github_ingestion(
                 config.github_commit_lookback_days,
             )
 
-        repos_json = cartography.intel.github.repos.get(
-            token,
-            api_url,
-            org_name,
-        )
-        # Filter out None entries
-        valid_repos = [r for r in repos_json if r is not None]
+        if requested_syncs is None or "packages" in requested_syncs:
+            repos_json = cartography.intel.github.repos.get(token, api_url, org_name)
+            valid_repos = [r for r in repos_json if r is not None]
 
-        # Sync GHCR (container packages, image manifests, tags, attestations).
-        # Runs before supply_chain.sync so the latter can correlate digests.
-        # Gate on cleanup_safe — not on the packages list — so an org that
-        # legitimately has zero packages still gets its stale GHCR images,
-        # tags, and attestations reaped. An endpoint outage or missing-scope
-        # condition flips cleanup_safe to False, which disables both the
-        # fetches and the downstream cleanups.
-        if opts.packages:
+            # Sync GHCR (container packages, image manifests, tags, attestations).
+            # Runs before supply_chain.sync so the latter can correlate digests.
+            # Gate on cleanup_safe — not on the packages list — so an org that
+            # legitimately has zero packages still gets its stale GHCR images,
+            # tags, and attestations reaped. An endpoint outage or missing-scope
+            # condition flips cleanup_safe to False, which disables both the
+            # fetches and the downstream cleanups.
             ghcr_result = cartography.intel.github.packages.sync_packages(
                 neo4j_session,
                 token,
@@ -259,17 +263,18 @@ def start_github_ingestion(
                     additional_observed_digests=ghcr_observed_and_skipped,
                 )
 
-        if opts.supply_chain and valid_repos:
-            cartography.intel.github.supply_chain.sync(
-                neo4j_session,
-                token,
-                api_url,
-                org_name,
-                common_job_parameters["UPDATE_TAG"],
-                common_job_parameters,
-                valid_repos,
-                workflows=all_workflows,
-            )
+                if requested_syncs is None or "supply_chain" in requested_syncs:
+                    if valid_repos:
+                        cartography.intel.github.supply_chain.sync(
+                            neo4j_session,
+                            token,
+                            api_url,
+                            org_name,
+                            common_job_parameters["UPDATE_TAG"],
+                            common_job_parameters,
+                            valid_repos,
+                            workflows=all_workflows,
+                        )
 
         processed_any_org = True
 
