@@ -369,7 +369,6 @@ class CLI:
                         'We recommend including "create-indexes" first and "analysis" last.'
                     ),
                     rich_help_panel=PANEL_CORE,
-                    envvar="CARTOGRAPHY_SELECTED_MODULES",
                 ),
             ] = None,
             update_tag: Annotated[
@@ -759,7 +758,6 @@ class CLI:
                     help="Skip dependency manifest fetching for archived GitHub repos.",
                     rich_help_panel=PANEL_GITHUB,
                     hidden=PANEL_GITHUB not in visible_panels,
-                    envvar="CARTOGRAPHY_GITHUB_SKIP_ARCHIVED_REPO_MANIFESTS",
                 ),
             ] = False,
             github_requested_syncs: Annotated[
