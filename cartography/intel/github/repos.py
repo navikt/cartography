@@ -25,6 +25,8 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from cartography.client.core.tx import load as load_data
+from cartography.client.core.tx import read_list_of_dicts_tx
+from cartography.client.core.tx import run_write_query
 from cartography.graph.job import GraphJob
 from cartography.helpers import backoff_handler
 from cartography.intel.github.codeowners import normalize_repo_relative_path
@@ -107,6 +109,7 @@ GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
                     createdAt
                     description
                     updatedAt
+                    pushedAt
                     homepageUrl
                     languages(first: 25){
                         totalCount
@@ -513,29 +516,126 @@ def _fetch_manifests_for_repo(
     api_url: str,
     org: str,
     skip_archived_repos: bool,
-) -> tuple[str, list[Any], bool]:
+    skip_unchanged_repos: bool = False,
+) -> tuple[str, list[Any], bool, str | None]:
     """
     Fetch dependency graph manifests for a single repo.
-    Returns (repo_url, manifests, cleanup_safe).
+    Returns (repo_url, manifests, cleanup_safe, skip_reason).
+    skip_reason is one of None (fetched), "archived", or "unchanged".
     Designed to be called from worker threads via ThreadPoolExecutor.
     """
     repo_name = repo.get("name")
     repo_url = repo.get("url", "")
     if skip_archived_repos and repo.get("isArchived"):
         logger.debug("Skipping dependency manifest fetch for archived repo %s.", repo_name)
-        return repo_url, [], True
+        return repo_url, [], True, "archived"
+
+    pushedat = repo.get("pushedAt")
+    manifests_synced_pushedat = repo.get("manifests_synced_pushedat")
+    if (
+        skip_unchanged_repos
+        and pushedat is not None
+        and manifests_synced_pushedat is not None
+        and pushedat == manifests_synced_pushedat
+    ):
+        logger.debug(
+            "Skipping dependency manifest fetch for unchanged repo %s (pushedat unchanged).",
+            repo_name,
+        )
+        return repo_url, [], True, "unchanged"
+
     try:
         manifests, repo_cleanup_safe = _get_repo_dep_manifests(token, api_url, org, str(repo_name))
         if manifests:
             logger.debug("Fetched %d dependency manifests for repo %s.", len(manifests), repo_name)
-        return repo_url, manifests, repo_cleanup_safe
+        return repo_url, manifests, repo_cleanup_safe, None
     except requests.exceptions.RequestException:
         logger.warning(
             "Failed to fetch dependency manifests for repo %s; skipping.",
             repo_name,
             exc_info=True,
         )
-        return repo_url, [], False
+        return repo_url, [], False, None
+
+
+def _touch_skipped_dependency_manifests(
+    neo4j_session: neo4j.Session,
+    skipped_repo_urls: list[str],
+    update_tag: int,
+) -> None:
+    """
+    Refresh `lastupdated` on the existing DependencyGraphManifest/Dependency
+    nodes for repos whose manifest fetch was skipped this run (because
+    pushedat was unchanged), so the end-of-run stale-tag cleanup doesn't
+    delete them.
+    """
+    if not skipped_repo_urls:
+        return
+    run_write_query(
+        neo4j_session,
+        """
+        UNWIND $repo_urls AS repo_url
+        MATCH (:GitHubRepository {id: repo_url})-[:HAS_MANIFEST]->(m:DependencyGraphManifest)
+        SET m.lastupdated = $update_tag
+        """,
+        repo_urls=skipped_repo_urls,
+        update_tag=update_tag,
+    )
+    run_write_query(
+        neo4j_session,
+        """
+        UNWIND $repo_urls AS repo_url
+        MATCH (:GitHubRepository {id: repo_url})-[:HAS_MANIFEST]->(:DependencyGraphManifest)
+              -[:REQUIRES]->(d:Dependency)
+        SET d.lastupdated = $update_tag
+        """,
+        repo_urls=skipped_repo_urls,
+        update_tag=update_tag,
+    )
+
+
+def _update_manifests_synced_bookmarks(
+    neo4j_session: neo4j.Session,
+    synced_bookmarks: list[dict[str, str]],
+) -> None:
+    """
+    Record the `pushedat` value seen at the time of a successful (i.e. not
+    skipped) dependency manifest fetch, so future runs can compare against it
+    to decide whether to skip.
+    """
+    if not synced_bookmarks:
+        return
+    run_write_query(
+        neo4j_session,
+        """
+        UNWIND $updates AS u
+        MATCH (repo:GitHubRepository {id: u.repo_url})
+        SET repo.manifests_synced_pushedat = u.pushedat
+        """,
+        updates=synced_bookmarks,
+    )
+
+
+def _get_manifests_synced_bookmarks(
+    neo4j_session: neo4j.Session,
+    repo_urls: list[str],
+) -> dict[str, str | None]:
+    """
+    Fetch the current `manifests_synced_pushedat` bookmark for the given repo
+    URLs from the graph.
+    """
+    if not repo_urls:
+        return {}
+    rows = neo4j_session.execute_read(
+        read_list_of_dicts_tx,
+        """
+        UNWIND $repo_urls AS repo_url
+        MATCH (r:GitHubRepository {id: repo_url})
+        RETURN r.id AS url, r.manifests_synced_pushedat AS manifests_synced_pushedat
+        """,
+        repo_urls=repo_urls,
+    )
+    return {row["url"]: row["manifests_synced_pushedat"] for row in rows}
 
 
 def _get_dep_manifests_for_repos(
@@ -544,7 +644,10 @@ def _get_dep_manifests_for_repos(
     api_url: str,
     token: str,
     skip_archived_repos: bool = False,
+    skip_unchanged_repos: bool = False,
     parallel_workers: int = 1,
+    neo4j_session: neo4j.Session | None = None,
+    update_tag: int | None = None,
 ) -> tuple[dict[str, dict[str, Any]], bool]:
     """
     For every repo in the given list, retrieve its dependency graph manifests individually.
@@ -555,12 +658,24 @@ def _get_dep_manifests_for_repos(
     :param api_url: The Github v4 API endpoint as string.
     :param token: The Github API token as string.
     :param skip_archived_repos: Skip archived repos if True.
+    :param skip_unchanged_repos: Skip repos whose pushedAt is unchanged since
+        the last successful manifest fetch, if True. Requires neo4j_session.
     :param parallel_workers: Number of repos to fetch concurrently. Default 1 (sequential).
+    :param neo4j_session: Neo4j session, required when skip_unchanged_repos is True
+        (used to look up prior sync bookmarks and to touch/update them).
     :return: A tuple of repo URL to dependencyGraphManifests structure and
         whether manifest cleanup is safe.
     """
     non_null_repos = [repo for repo in repo_raw_data if repo is not None]
     total_repos = len(non_null_repos)
+
+    if skip_unchanged_repos and neo4j_session is not None:
+        bookmarks = _get_manifests_synced_bookmarks(
+            neo4j_session,
+            [repo["url"] for repo in non_null_repos if repo.get("url")],
+        )
+        for repo in non_null_repos:
+            repo["manifests_synced_pushedat"] = bookmarks.get(repo.get("url", ""))
 
     if skip_archived_repos:
         archived_count = sum(1 for repo in non_null_repos if repo.get("isArchived"))
@@ -584,6 +699,8 @@ def _get_dep_manifests_for_repos(
     result: dict[str, dict[str, Any]] = {}
     failed_count = 0
     cleanup_safe = True
+    skipped_unchanged_repo_urls: list[str] = []
+    synced_bookmarks: list[dict[str, str]] = []
 
     eligible = [
         repo for repo in non_null_repos
@@ -597,17 +714,24 @@ def _get_dep_manifests_for_repos(
         futures = {
             executor.submit(
                 _fetch_manifests_for_repo,
-                repo, token, api_url, org, skip_archived_repos,
+                repo, token, api_url, org, skip_archived_repos, skip_unchanged_repos,
             ): repo
             for repo in eligible
         }
         for f in as_completed(futures):
-            repo_url, manifests, repo_cleanup_safe = f.result()
+            repo_url, manifests, repo_cleanup_safe, skip_reason = f.result()
             if not repo_cleanup_safe:
                 failed_count += 1
             cleanup_safe = cleanup_safe and repo_cleanup_safe
             if manifests:
                 result[repo_url] = {"nodes": manifests}
+            if skip_reason == "unchanged":
+                skipped_unchanged_repo_urls.append(repo_url)
+            elif skip_reason is None and repo_cleanup_safe:
+                repo_dict = futures[f]
+                pushedat = repo_dict.get("pushedAt")
+                if pushedat is not None:
+                    synced_bookmarks.append({"repo_url": repo_url, "pushedat": pushedat})
             completed += 1
             if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
                 logger.info(
@@ -616,6 +740,19 @@ def _get_dep_manifests_for_repos(
                     completed,
                     total,
                 )
+
+    if skip_unchanged_repos and neo4j_session is not None and update_tag is not None:
+        _touch_skipped_dependency_manifests(
+            neo4j_session, skipped_unchanged_repo_urls, update_tag,
+        )
+        _update_manifests_synced_bookmarks(neo4j_session, synced_bookmarks)
+        logger.info(
+            "Dependency manifest incremental sync for org %s: skipped refetch "
+            "for %d/%d unchanged repos.",
+            org,
+            len(skipped_unchanged_repo_urls),
+            total_repos,
+        )
 
     if failed_count > 0:
         logger.warning(
@@ -1366,6 +1503,7 @@ def _transform_repo_objects(input_repo_object: Dict, out_repo_list: List[Dict]) 
             "url": input_repo_object["url"],
             "sshurl": ssh_url,
             "updatedat": input_repo_object["updatedAt"],
+            "pushedat": input_repo_object.get("pushedAt"),
             "owner_org_id": owner["url"] if owner_type == "Organization" else None,
             "owner_user_id": owner["url"] if owner_type == "User" else None,
         },
@@ -2722,6 +2860,7 @@ def sync(
     github_skip_archived_repo_manifests: bool = False,
     parallel_workers: int = 1,
     sync_dep_manifests: bool = True,
+    github_incremental_dep_manifest_sync: bool = False,
 ) -> GitHubRepoSyncResult:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -2734,6 +2873,8 @@ def sync(
     :param parallel_workers: Number of parallel workers for per-repo API fetches. Default 1 (sequential).
     :param sync_dep_manifests: Fetch dependency graph manifests. Set False to skip the slow O(n) manifest
         phase; use the separate 'dep_manifests' requested-sync value to run it independently.
+    :param github_incremental_dep_manifest_sync: Skip re-fetching dependency graph manifests for
+        repos whose pushedAt is unchanged since the last successful manifest sync.
     :return: Repository and dependency manifest data fetched for this org.
     """
     logger.info("Syncing GitHub repos")
@@ -2824,7 +2965,10 @@ def sync(
             github_url,
             github_api_key,
             skip_archived_repos=github_skip_archived_repo_manifests,
+            skip_unchanged_repos=github_incremental_dep_manifest_sync,
             parallel_workers=parallel_workers,
+            neo4j_session=neo4j_session,
+            update_tag=common_job_parameters["UPDATE_TAG"],
         )
     else:
         logger.info(

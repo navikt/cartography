@@ -32,6 +32,7 @@ class GitHubRepositoryNodeProperties(CartographyNodeProperties):
     url: PropertyRef = PropertyRef("url", extra_index=True)
     sshurl: PropertyRef = PropertyRef("sshurl")
     updatedat: PropertyRef = PropertyRef("updatedat")
+    pushedat: PropertyRef = PropertyRef("pushedat")
 
 
 @dataclass(frozen=True)

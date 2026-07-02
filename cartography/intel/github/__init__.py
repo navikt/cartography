@@ -28,17 +28,23 @@ from cartography.util import timeit
 logger = logging.getLogger(__name__)
 
 
-def _get_repos_from_graph(neo4j_session: neo4j.Session, organization: str) -> list[str]:
+def _get_repos_from_graph(
+    neo4j_session: neo4j.Session,
+    organization: str,
+    skip_archived: bool = False,
+) -> list[str]:
     """
     Get repository names for an organization from the graph instead of making an API call.
 
     :param neo4j_session: Neo4j session for database interface
     :param organization: GitHub organization name
+    :param skip_archived: If True, exclude archived/disabled repos.
     :return: List of repository names
     """
     org_url = f"https://github.com/{organization}"
     query = """
     MATCH (org:GitHubOrganization {id: $org_url})<-[:OWNER]-(repo:GitHubRepository)
+    WHERE NOT $skip_archived OR (repo.archived = false AND repo.disabled = false)
     RETURN repo.name
     ORDER BY repo.name
     """
@@ -48,6 +54,7 @@ def _get_repos_from_graph(neo4j_session: neo4j.Session, organization: str) -> li
             read_list_of_values_tx,
             query,
             org_url=org_url,
+            skip_archived=skip_archived,
         ),
     )
 
@@ -150,6 +157,7 @@ def start_github_ingestion(
                 config.github_skip_archived_repo_manifests,
                 parallel_workers=config.github_parallel_workers,
                 sync_dep_manifests=sync_dep_manifests,
+                github_incremental_dep_manifest_sync=config.github_incremental_dep_manifest_sync,
             )
         elif requested_syncs is not None and "dep_manifests" in requested_syncs:
             # dep_manifests requested without repos in the same run:
@@ -168,6 +176,7 @@ def start_github_ingestion(
                 config.github_skip_archived_repo_manifests,
                 parallel_workers=config.github_parallel_workers,
                 sync_dep_manifests=True,
+                github_incremental_dep_manifest_sync=config.github_incremental_dep_manifest_sync,
             )
 
         if requested_syncs is None or "personal_access_tokens" in requested_syncs:
@@ -221,12 +230,18 @@ def start_github_ingestion(
                 api_url,
                 org_name,
                 parallel_workers=config.github_parallel_workers,
+                skip_archived_repos=config.github_skip_archived_actions_sync,
+                skip_unchanged_repos=config.github_incremental_actions_workflow_sync,
             )
 
         # Sync commit relationships for the configured lookback period.
         # Get repo names from the graph instead of making another API call.
         if requested_syncs is None or "commits" in requested_syncs:
-            repo_names = _get_repos_from_graph(neo4j_session, org_name)
+            repo_names = _get_repos_from_graph(
+                neo4j_session,
+                org_name,
+                skip_archived=config.github_skip_archived_commits_sync,
+            )
             cartography.intel.github.commits.sync_github_commits(
                 neo4j_session,
                 token,
@@ -235,6 +250,7 @@ def start_github_ingestion(
                 repo_names,
                 common_job_parameters["UPDATE_TAG"],
                 config.github_commit_lookback_days,
+                skip_stale_repos=config.github_skip_stale_commits_sync,
             )
 
         if requested_syncs is None or "packages" in requested_syncs:

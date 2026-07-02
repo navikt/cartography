@@ -786,6 +786,64 @@ class CLI:
                     hidden=PANEL_GITHUB not in visible_panels,
                 ),
             ] = 1,
+            github_skip_archived_actions_sync: Annotated[
+                bool,
+                typer.Option(
+                    "--github-skip-archived-actions-sync",
+                    help=(
+                        "Skip GitHub Actions (workflows/secrets/variables/environments) "
+                        "sync for archived/disabled repos."
+                    ),
+                    rich_help_panel=PANEL_GITHUB,
+                    hidden=PANEL_GITHUB not in visible_panels,
+                ),
+            ] = False,
+            github_skip_archived_commits_sync: Annotated[
+                bool,
+                typer.Option(
+                    "--github-skip-archived-commits-sync",
+                    help="Skip GitHub commits sync for archived/disabled repos.",
+                    rich_help_panel=PANEL_GITHUB,
+                    hidden=PANEL_GITHUB not in visible_panels,
+                ),
+            ] = False,
+            github_skip_stale_commits_sync: Annotated[
+                bool,
+                typer.Option(
+                    "--github-skip-stale-commits-sync",
+                    help=(
+                        "Skip GitHub commits sync for repos with no push since the "
+                        "commit lookback window (--github-commit-lookback-days)."
+                    ),
+                    rich_help_panel=PANEL_GITHUB,
+                    hidden=PANEL_GITHUB not in visible_panels,
+                ),
+            ] = False,
+            github_incremental_actions_workflow_sync: Annotated[
+                bool,
+                typer.Option(
+                    "--github-incremental-actions-workflow-sync",
+                    help=(
+                        "Skip re-fetching workflow YAML content for repos whose "
+                        "pushedAt is unchanged since the last successful Actions sync. "
+                        "Secrets/variables/environments are still always refreshed."
+                    ),
+                    rich_help_panel=PANEL_GITHUB,
+                    hidden=PANEL_GITHUB not in visible_panels,
+                ),
+            ] = False,
+            github_incremental_dep_manifest_sync: Annotated[
+                bool,
+                typer.Option(
+                    "--github-incremental-dep-manifest-sync",
+                    help=(
+                        "Skip re-fetching dependency graph manifests for repos whose "
+                        "pushedAt is unchanged since the last successful manifest sync."
+                    ),
+                    rich_help_panel=PANEL_GITHUB,
+                    hidden=PANEL_GITHUB not in visible_panels,
+                ),
+            ] = False,
             # =================================================================
             # GitLab Options
             # =================================================================
@@ -2668,6 +2726,11 @@ class CLI:
                  github_skip_archived_repo_manifests=github_skip_archived_repo_manifests,
                  github_requested_syncs=github_requested_syncs,
                  github_parallel_workers=github_parallel_workers,
+                github_skip_archived_actions_sync=github_skip_archived_actions_sync,
+                github_skip_archived_commits_sync=github_skip_archived_commits_sync,
+                github_skip_stale_commits_sync=github_skip_stale_commits_sync,
+                github_incremental_actions_workflow_sync=github_incremental_actions_workflow_sync,
+                github_incremental_dep_manifest_sync=github_incremental_dep_manifest_sync,
                 digitalocean_token=digitalocean_token,
                 permission_relationships_file=permission_relationships_file,
                 azure_permission_relationships_file=azure_permission_relationships_file,

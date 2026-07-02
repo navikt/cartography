@@ -132,6 +132,16 @@ class Config:
     :param github_requested_syncs: Comma-separated list of GitHub resources to sync. Optional.
     :type github_parallel_workers: int
     :param github_parallel_workers: Number of parallel workers for per-repo GitHub API fetches. Default 1 (sequential).
+    :type github_skip_archived_actions_sync: bool
+    :param github_skip_archived_actions_sync: Skip GitHub Actions (workflows/secrets/variables/environments) sync for archived/disabled repos. Optional.
+    :type github_skip_archived_commits_sync: bool
+    :param github_skip_archived_commits_sync: Skip GitHub commits sync for archived/disabled repos. Optional.
+    :type github_skip_stale_commits_sync: bool
+    :param github_skip_stale_commits_sync: Skip GitHub commits sync for repos with no push since the commit lookback window. Optional.
+    :type github_incremental_actions_workflow_sync: bool
+    :param github_incremental_actions_workflow_sync: Skip re-fetching workflow YAML content for repos whose pushedAt is unchanged since the last successful Actions sync. Secrets/variables/environments are still always refreshed. Optional.
+    :type github_incremental_dep_manifest_sync: bool
+    :param github_incremental_dep_manifest_sync: Skip re-fetching dependency graph manifests for repos whose pushedAt is unchanged since the last successful manifest sync. Optional.
     :type digitalocean_token: str
     :param digitalocean_token: DigitalOcean access token. Optional.
     :type permission_relationships_file: str
@@ -390,6 +400,11 @@ class Config:
         github_skip_archived_repo_manifests=False,
         github_requested_syncs=None,
         github_parallel_workers=1,
+        github_skip_archived_actions_sync=False,
+        github_skip_archived_commits_sync=False,
+        github_skip_stale_commits_sync=False,
+        github_incremental_actions_workflow_sync=False,
+        github_incremental_dep_manifest_sync=False,
         digitalocean_token=None,
         permission_relationships_file=None,
         azure_permission_relationships_file=None,
@@ -567,6 +582,15 @@ class Config:
         self.github_skip_archived_repo_manifests = github_skip_archived_repo_manifests
         self.github_requested_syncs = github_requested_syncs
         self.github_parallel_workers: int = github_parallel_workers
+        self.github_skip_archived_actions_sync = github_skip_archived_actions_sync
+        self.github_skip_archived_commits_sync = github_skip_archived_commits_sync
+        self.github_skip_stale_commits_sync = github_skip_stale_commits_sync
+        self.github_incremental_actions_workflow_sync = (
+            github_incremental_actions_workflow_sync
+        )
+        self.github_incremental_dep_manifest_sync = (
+            github_incremental_dep_manifest_sync
+        )
         self.digitalocean_token = digitalocean_token
         self.permission_relationships_file = permission_relationships_file
         self.azure_permission_relationships_file = azure_permission_relationships_file
