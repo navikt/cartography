@@ -1147,7 +1147,7 @@ def test_get_dep_manifests_for_repos_incremental_skip_preserves_manifests(
         MERGE (org:GitHubOrganization{id: "https://github.com/simpsoncorp"})
         MERGE (repo:GitHubRepository{id: $repo_url})
         SET repo.name = "sample_repo", repo.lastupdated = $update_tag,
-            repo.manifests_synced_pushedat = "2024-01-01T00:00:00Z"
+            repo.synced_pushedat = "2024-01-01T00:00:00Z"
         MERGE (repo)-[:OWNER]->(org)
         MERGE (repo)-[:HAS_MANIFEST]->(m:DependencyGraphManifest{id: $manifest_id})
         SET m.lastupdated = $update_tag
@@ -1202,7 +1202,7 @@ def test_get_dep_manifests_for_repos_incremental_skip_preserves_manifests(
 
     # Assert - bookmark unchanged (still valid for next comparison)
     bookmark_row = neo4j_session.run(
-        "MATCH (r:GitHubRepository {id: $id}) RETURN r.manifests_synced_pushedat AS bookmark",
+        "MATCH (r:GitHubRepository {id: $id}) RETURN r.synced_pushedat AS bookmark",
         id=repo_url,
     ).single()
     assert bookmark_row["bookmark"] == "2024-01-01T00:00:00Z"

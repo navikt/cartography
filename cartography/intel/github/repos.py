@@ -531,12 +531,12 @@ def _fetch_manifests_for_repo(
         return repo_url, [], True, "archived"
 
     pushedat = repo.get("pushedAt")
-    manifests_synced_pushedat = repo.get("manifests_synced_pushedat")
+    synced_pushedat = repo.get("manifests_synced_pushedat")
     if (
         skip_unchanged_repos
         and pushedat is not None
-        and manifests_synced_pushedat is not None
-        and pushedat == manifests_synced_pushedat
+        and synced_pushedat is not None
+        and pushedat == synced_pushedat
     ):
         logger.debug(
             "Skipping dependency manifest fetch for unchanged repo %s (pushedat unchanged).",
@@ -616,13 +616,40 @@ def _update_manifests_synced_bookmarks(
     )
 
 
+def _write_synced_pushedat(
+    neo4j_session: neo4j.Session,
+    updates: list[dict[str, str]],
+) -> None:
+    """
+    Write the ``synced_pushedat`` bookmark on each ``GitHubRepository`` node.
+
+    This single bookmark is written once after a successful repos sync and is
+    shared by all downstream incremental-skip stages (Actions, manifests,
+    commits). A stage skips re-fetching a repo when its current ``pushedat``
+    matches ``synced_pushedat``, meaning nothing has been pushed since the last
+    time the repos sync ran.
+    """
+    if not updates:
+        return
+    run_write_query(
+        neo4j_session,
+        """
+        UNWIND $updates AS u
+        MATCH (repo:GitHubRepository {id: u.repo_url})
+        SET repo.synced_pushedat = u.pushedat
+        """,
+        updates=updates,
+    )
+
+
 def _get_manifests_synced_bookmarks(
     neo4j_session: neo4j.Session,
     repo_urls: list[str],
 ) -> dict[str, str | None]:
     """
-    Fetch the current `manifests_synced_pushedat` bookmark for the given repo
-    URLs from the graph.
+    Fetch the ``synced_pushedat`` bookmark for the given repo URLs from the
+    graph. This is the value written after the last successful repos sync and
+    is used by the manifests incremental-skip logic.
     """
     if not repo_urls:
         return {}
@@ -631,11 +658,11 @@ def _get_manifests_synced_bookmarks(
         """
         UNWIND $repo_urls AS repo_url
         MATCH (r:GitHubRepository {id: repo_url})
-        RETURN r.id AS url, r.manifests_synced_pushedat AS manifests_synced_pushedat
+        RETURN r.id AS url, r.synced_pushedat AS synced_pushedat
         """,
         repo_urls=repo_urls,
     )
-    return {row["url"]: row["manifests_synced_pushedat"] for row in rows}
+    return {row["url"]: row["synced_pushedat"] for row in rows}
 
 
 def _get_dep_manifests_for_repos(
@@ -675,8 +702,8 @@ def _get_dep_manifests_for_repos(
             [repo["url"] for repo in non_null_repos if repo.get("url")],
         )
         for repo in non_null_repos:
+            # Store under the key _fetch_manifests_for_repo reads
             repo["manifests_synced_pushedat"] = bookmarks.get(repo.get("url", ""))
-
     if skip_archived_repos:
         archived_count = sum(1 for repo in non_null_repos if repo.get("isArchived"))
         logger.info(
@@ -700,7 +727,6 @@ def _get_dep_manifests_for_repos(
     failed_count = 0
     cleanup_safe = True
     skipped_unchanged_repo_urls: list[str] = []
-    synced_bookmarks: list[dict[str, str]] = []
 
     eligible = [
         repo for repo in non_null_repos
@@ -727,11 +753,6 @@ def _get_dep_manifests_for_repos(
                 result[repo_url] = {"nodes": manifests}
             if skip_reason == "unchanged":
                 skipped_unchanged_repo_urls.append(repo_url)
-            elif skip_reason is None and repo_cleanup_safe:
-                repo_dict = futures[f]
-                pushedat = repo_dict.get("pushedAt")
-                if pushedat is not None:
-                    synced_bookmarks.append({"repo_url": repo_url, "pushedat": pushedat})
             completed += 1
             if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
                 logger.info(
@@ -745,7 +766,6 @@ def _get_dep_manifests_for_repos(
         _touch_skipped_dependency_manifests(
             neo4j_session, skipped_unchanged_repo_urls, update_tag,
         )
-        _update_manifests_synced_bookmarks(neo4j_session, synced_bookmarks)
         logger.info(
             "Dependency manifest incremental sync for org %s: skipped refetch "
             "for %d/%d unchanged repos.",
@@ -2986,6 +3006,20 @@ def sync(
         github_url,
     )
     load(neo4j_session, common_job_parameters, repo_data)
+
+    # Write synced_pushedat bookmark for every repo that has a pushedat value.
+    # This single property is the shared signal used by the Actions, manifests,
+    # and commits incremental-skip logic to determine whether a repo has
+    # changed since the last completed repos sync.
+    _write_synced_pushedat(
+        neo4j_session,
+        [
+            {"repo_url": repo["url"], "pushedat": repo["pushedat"]}
+            for repo in repo_data["repos"]
+            if repo.get("pushedat")
+        ],
+    )
+
     owner_org_id = next(
         (
             repo["owner_org_id"]

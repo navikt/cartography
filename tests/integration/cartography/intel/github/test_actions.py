@@ -37,14 +37,14 @@ def _ensure_repo_exists(neo4j_session):
     )
 
 
-def _set_repo_pushedat(neo4j_session, pushedat, actions_synced_pushedat=None):
+def _set_repo_pushedat(neo4j_session, pushedat, synced_pushedat=None):
     neo4j_session.run(
         """
         MATCH (repo:GitHubRepository{id: "https://github.com/simpsoncorp/sample_repo"})
-        SET repo.pushedat = $pushedat, repo.actions_synced_pushedat = $actions_synced_pushedat
+        SET repo.pushedat = $pushedat, repo.synced_pushedat = $synced_pushedat
         """,
         pushedat=pushedat,
-        actions_synced_pushedat=actions_synced_pushedat,
+        synced_pushedat=synced_pushedat,
     )
 
 
@@ -1176,20 +1176,23 @@ def test_sync_github_actions_incremental_skip_preserves_workflows(
         skip_unchanged_repos=True,
     )
 
-    # Assert - first sync fetched workflows and recorded the bookmark
+    # Assert - first sync fetched workflows; synced_pushedat is set externally
+    # (by repos.sync() in a real run) — simulate that by setting it now so the
+    # second sync can use it as the bookmark.
     assert mock_repo_workflows.call_count == 1
     assert check_nodes(neo4j_session, "GitHubWorkflow", ["id"]) == {
         (12345678,),
         (12345679,),
         (12345680,),
     }
-    bookmark = neo4j_session.run(
+    # Simulate repos.sync() writing synced_pushedat after repos fetch
+    neo4j_session.run(
         'MATCH (r:GitHubRepository{id: "https://github.com/simpsoncorp/sample_repo"}) '
-        "RETURN r.actions_synced_pushedat AS bookmark",
-    ).single()["bookmark"]
-    assert bookmark == "2024-01-01T00:00:00Z"
+        "SET r.synced_pushedat = $pushedat",
+        pushedat="2024-01-01T00:00:00Z",
+    )
 
-    # Act - second sync, pushedat unchanged, new update tag
+    # Act - second sync, pushedat matches synced_pushedat, new update tag
     second_update_tag = TEST_UPDATE_TAG + 1
     cartography.intel.github.actions.sync(
         neo4j_session,

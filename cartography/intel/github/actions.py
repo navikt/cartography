@@ -728,7 +728,7 @@ def _get_repos_from_graph(
     skip_archived_repos: bool = False,
 ) -> list[dict[str, Any]]:
     """
-    Get repository name/url/pushedat/actions_synced_pushedat metadata for an
+    Get repository name/url/pushedat/synced_pushedat metadata for an
     organization from the graph.
 
     :param skip_archived_repos: If True, exclude archived/disabled repos.
@@ -738,7 +738,7 @@ def _get_repos_from_graph(
     MATCH (org:GitHubOrganization {id: $org_url})<-[:OWNER]-(repo:GitHubRepository)
     WHERE NOT $skip_archived_repos OR (repo.archived = false AND repo.disabled = false)
     RETURN repo.name AS name, repo.id AS url, repo.pushedat AS pushedat,
-           repo.actions_synced_pushedat AS actions_synced_pushedat
+           repo.synced_pushedat AS synced_pushedat
     ORDER BY repo.name
     """
     result: list[dict[str, Any]] = neo4j_session.execute_read(
@@ -783,7 +783,7 @@ def _fetch_actions_for_repo(
     total: int,
     repo_url: str = "",
     pushedat: str | None = None,
-    actions_synced_pushedat: str | None = None,
+    synced_pushedat: str | None = None,
     skip_unchanged_repos: bool = False,
 ) -> _RepoActionsData:
     """
@@ -792,18 +792,17 @@ def _fetch_actions_for_repo(
     Designed to be called from worker threads via ThreadPoolExecutor.
 
     :param skip_unchanged_repos: If True, skip re-fetching/re-parsing workflow
-        YAML content when `pushedat` is unchanged since the last successful
-        Actions sync for this repo (`actions_synced_pushedat`). Secrets,
-        variables, and environments are always fetched regardless, since they
-        can change without a push.
+        YAML content when `pushedat` matches `synced_pushedat` (written after
+        the last successful repos sync). Secrets, variables, and environments
+        are always fetched regardless.
     """
     data = _RepoActionsData(repo_name=repo_name, repo_url=repo_url, pushedat=pushedat)
 
     skip_workflows = (
         skip_unchanged_repos
         and pushedat is not None
-        and actions_synced_pushedat is not None
-        and pushedat == actions_synced_pushedat
+        and synced_pushedat is not None
+        and pushedat == synced_pushedat
     )
 
     if skip_workflows:
@@ -927,21 +926,12 @@ def _update_actions_synced_bookmarks(
     synced_bookmarks: list[dict[str, str]],
 ) -> None:
     """
-    Record the `pushedat` value seen at the time of a successful (i.e. not
-    skipped) Actions workflow fetch, so future runs can compare against it to
-    decide whether to skip.
+    No-op kept for backwards compatibility. The synced_pushedat bookmark is
+    now written centrally by repos.sync() after the repos fetch completes,
+    so per-stage write-back is no longer needed.
+
+    # DEPRECATED: will be removed in v1.0.0.
     """
-    if not synced_bookmarks:
-        return
-    run_write_query(
-        neo4j_session,
-        """
-        UNWIND $updates AS u
-        MATCH (repo:GitHubRepository {id: u.repo_url})
-        SET repo.actions_synced_pushedat = u.pushedat
-        """,
-        updates=synced_bookmarks,
-    )
 
 
 @timeit
@@ -1013,7 +1003,6 @@ def sync(
     progress_lock = threading.Lock()
 
     skipped_repo_urls: list[str] = []
-    synced_bookmarks: list[dict[str, str]] = []
 
     # Submit all repos to a single bounded thread pool up front so idle workers
     # immediately pick up the next repo instead of waiting for a batch's
@@ -1026,7 +1015,7 @@ def sync(
                 progress_counter, progress_lock, total,
                 repo_url=repo["url"],
                 pushedat=repo.get("pushedat"),
-                actions_synced_pushedat=repo.get("actions_synced_pushedat"),
+                synced_pushedat=repo.get("synced_pushedat"),
                 skip_unchanged_repos=skip_unchanged_repos,
             ): repo["name"]
             for repo in repos
@@ -1061,14 +1050,9 @@ def sync(
             if skip_unchanged_repos:
                 if d.workflows_skipped:
                     skipped_repo_urls.append(d.repo_url)
-                elif d.pushedat is not None:
-                    synced_bookmarks.append(
-                        {"repo_url": d.repo_url, "pushedat": d.pushedat},
-                    )
 
     if skip_unchanged_repos:
         _touch_skipped_actions_workflows(neo4j_session, skipped_repo_urls, update_tag)
-        _update_actions_synced_bookmarks(neo4j_session, synced_bookmarks)
         logger.info(
             "GitHub Actions incremental sync for org %s: skipped workflow refetch "
             "for %d/%d unchanged repos.",
