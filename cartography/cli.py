@@ -760,18 +760,6 @@ class CLI:
                     hidden=PANEL_GITHUB not in visible_panels,
                 ),
             ] = False,
-            github_requested_syncs: Annotated[
-                str | None,
-                typer.Option(
-                    "--github-requested-syncs",
-                    help=(
-                        "Comma-separated list of GitHub resources to sync. "
-                        'Example: "users,repos,teams". See cartography.intel.github.resources for full list.'
-                    ),
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                ),
-            ] = None,
             github_parallel_workers: Annotated[
                 int,
                 typer.Option(
@@ -2171,14 +2159,6 @@ class CLI:
 
                 parse_and_validate_gcp_requested_syncs(gcp_requested_syncs)
 
-            # Validate GitHub options
-            if github_requested_syncs:
-                from cartography.intel.github.util import (
-                    parse_and_validate_github_requested_syncs,
-                )
-
-                parse_and_validate_github_requested_syncs(github_requested_syncs)
-
             # Read Azure client secret
             azure_client_secret = None
             if azure_sp_auth and azure_client_secret_env_var:
@@ -2724,7 +2704,6 @@ class CLI:
                 github_config=github_config,
                 github_commit_lookback_days=github_commit_lookback_days,
                  github_skip_archived_repo_manifests=github_skip_archived_repo_manifests,
-                 github_requested_syncs=github_requested_syncs,
                  github_parallel_workers=github_parallel_workers,
                 github_skip_archived_actions_sync=github_skip_archived_actions_sync,
                 github_skip_archived_commits_sync=github_skip_archived_commits_sync,

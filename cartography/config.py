@@ -128,8 +128,6 @@ class Config:
     :param github_commit_lookback_days: Number of days to look back for GitHub commit tracking. Optional.
     :type github_skip_archived_repo_manifests: bool
     :param github_skip_archived_repo_manifests: Skip dependency manifest fetching for archived GitHub repos. Optional.
-    :type github_requested_syncs: str
-    :param github_requested_syncs: Comma-separated list of GitHub resources to sync. Optional.
     :type github_parallel_workers: int
     :param github_parallel_workers: Number of parallel workers for per-repo GitHub API fetches. Default 1 (sequential).
     :type github_skip_archived_actions_sync: bool
@@ -398,7 +396,6 @@ class Config:
         github_config=None,
         github_commit_lookback_days=30,
         github_skip_archived_repo_manifests=False,
-        github_requested_syncs=None,
         github_parallel_workers=1,
         github_skip_archived_actions_sync=False,
         github_skip_archived_commits_sync=False,
@@ -580,7 +577,6 @@ class Config:
         self.github_config = github_config
         self.github_commit_lookback_days = github_commit_lookback_days
         self.github_skip_archived_repo_manifests = github_skip_archived_repo_manifests
-        self.github_requested_syncs = github_requested_syncs
         self.github_parallel_workers: int = github_parallel_workers
         self.github_skip_archived_actions_sync = github_skip_archived_actions_sync
         self.github_skip_archived_commits_sync = github_skip_archived_commits_sync

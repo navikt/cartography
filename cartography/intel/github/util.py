@@ -1,13 +1,11 @@
 import base64
 import json
 import logging
-import shlex
 import time
 from datetime import datetime
 from datetime import timedelta
 from datetime import timezone as tz
 from typing import Any
-from typing import List
 from typing import NamedTuple
 from urllib.parse import quote
 from urllib.parse import urlsplit
@@ -18,29 +16,6 @@ import requests
 logger = logging.getLogger(__name__)
 
 
-def parse_and_validate_github_requested_syncs(github_requested_syncs: str) -> List[str]:
-    """Parse and validate a comma-separated list of GitHub sub-syncs.
-
-    :param github_requested_syncs: Comma-separated string of resource names.
-    :return: Validated list of resource name strings.
-    :raises ValueError: If any token is not a known GitHub resource name.
-    """
-    from cartography.intel.github.resources import RESOURCE_FUNCTIONS
-
-    validated_resources: List[str] = []
-    for resource in github_requested_syncs.split(","):
-        resource = resource.strip()
-        if resource in RESOURCE_FUNCTIONS:
-            validated_resources.append(resource)
-        else:
-            valid_syncs: str = ", ".join(RESOURCE_FUNCTIONS)
-            raise ValueError(
-                f'Error parsing `github-requested-syncs`. You specified "{github_requested_syncs}". '
-                f"Please check that your string is formatted properly. "
-                f'Example valid input looks like "users,repos,teams" or "repos, actions, packages". '
-                f"Our full list of valid values is: {valid_syncs}.",
-            )
-    return validated_resources
 # Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
 _TIMEOUT = (60, 60)
 
@@ -64,31 +39,6 @@ _TRANSIENT_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 class PaginatedGraphqlData(NamedTuple):
     nodes: list[dict[str, Any]]
     edges: list[dict[str, Any]]
-
-
-def _build_gh_graphql_replay_command(
-    query: str,
-    organization: str,
-    cursor: str | None,
-    **kwargs: Any,
-) -> str:
-    """
-    Build a gh CLI command that replays the exact GraphQL call without embedding secrets.
-    """
-    command_parts = [
-        "gh api graphql",
-        f"-f query={shlex.quote(query)}",
-        f"-F login={shlex.quote(organization)}",
-    ]
-    if cursor is None:
-        command_parts.append("-F cursor=")
-    else:
-        command_parts.append(f"-F cursor={shlex.quote(cursor)}")
-    for key, value in kwargs.items():
-        if value is None:
-            continue
-        command_parts.append(f"-F {key}={shlex.quote(str(value))}")
-    return " ".join(command_parts)
 
 
 def _extract_error_message(response: requests.Response) -> str:
@@ -218,27 +168,9 @@ def call_github_api(query: str, variables: str, token: str, api_url: str) -> dic
     response.raise_for_status()
     response_json = response.json()
     if "errors" in response_json:
-        replay_command = None
-        try:
-            parsed_variables = json.loads(variables)
-            if isinstance(parsed_variables, dict):
-                replay_command = _build_gh_graphql_replay_command(
-                    query,
-                    str(parsed_variables.get("login", "")),
-                    parsed_variables.get("cursor"),
-                    **{
-                        key: value
-                        for key, value in parsed_variables.items()
-                        if key not in {"login", "cursor"}
-                    },
-                )
-        except (TypeError, ValueError):
-            replay_command = None
         logger.warning(
-            "call_github_api() response has errors, please investigate. Raw response: %s; "
-            "replay locally with: %s; continuing sync.",
-            response_json["errors"],
-            replay_command,
+            f'call_github_api() response has errors, please investigate. Raw response: {response_json["errors"]}; '
+            f"continuing sync.",
         )
     return response_json  # type: ignore
 
@@ -344,20 +276,13 @@ def fetch_all(
         if retry >= retries:
             logger.error(
                 "GitHub: Could not retrieve page of resource `%s` for org `%s` at cursor `%s` "
-                "after %d retries. Returning partial data collected so far (%d nodes, %d edges). "
-                "Replay locally with: %s",
+                "after %d retries. Returning partial data collected so far (%d nodes, %d edges).",
                 resource_type,
                 organization,
                 cursor,
                 retry,
                 len(data.nodes),
                 len(data.edges),
-                _build_gh_graphql_replay_command(
-                    query,
-                    organization,
-                    cursor,
-                    **kwargs,
-                ),
                 exc_info=True,
             )
             break
