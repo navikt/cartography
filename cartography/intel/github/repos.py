@@ -2867,10 +2867,9 @@ def sync(
     github_api_key: str,
     github_url: str,
     organization: str,
-    github_skip_archived_repo_manifests: bool = False,
     parallel_workers: int = 1,
     sync_dep_manifests: bool = True,
-    github_incremental_dep_manifest_sync: bool = False,
+    incremental_sync: bool = False,
 ) -> GitHubRepoSyncResult:
     """
     Performs the sequential tasks to collect, transform, and sync github data
@@ -2879,12 +2878,11 @@ def sync(
     :param github_api_key: The API key to access the GitHub v4 API
     :param github_url: The URL for the GitHub v4 endpoint to use
     :param organization: The organization to query GitHub for
-    :param github_skip_archived_repo_manifests: Skip dependency manifest fetch for archived repos.
     :param parallel_workers: Number of parallel workers for per-repo API fetches. Default 1 (sequential).
     :param sync_dep_manifests: Fetch dependency graph manifests. Set False to skip the slow O(n) manifest
         phase; use the separate 'dep_manifests' requested-sync value to run it independently.
-    :param github_incremental_dep_manifest_sync: Skip re-fetching dependency graph manifests for
-        repos whose pushedAt is unchanged since the last successful manifest sync.
+    :param incremental_sync: Skip archived/disabled repos and skip re-fetching manifests for repos
+        whose pushedAt is unchanged since the last sync.
     :return: Repository and dependency manifest data fetched for this org.
     """
     logger.info("Syncing GitHub repos")
@@ -2974,8 +2972,8 @@ def sync(
             organization,
             github_url,
             github_api_key,
-            skip_archived_repos=github_skip_archived_repo_manifests,
-            skip_unchanged_repos=github_incremental_dep_manifest_sync,
+            skip_archived_repos=incremental_sync,
+            skip_unchanged_repos=incremental_sync,
             parallel_workers=parallel_workers,
             neo4j_session=neo4j_session,
             update_tag=common_job_parameters["UPDATE_TAG"],

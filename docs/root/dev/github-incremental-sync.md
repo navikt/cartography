@@ -20,48 +20,33 @@ Every `GitHubRepository` node has two properties that drive skip decisions:
   been pushed since the last repos sync and can be skipped.
 
 Because `synced_pushedat` is written centrally by repos sync for every repo,
-all incremental-skip flags benefit from the first run — there is no separate
-warm-up pass.
+all incremental-skip behaviour is active from the first run — there is no
+separate warm-up pass.
 
 ## Flags
 
 All flags default to `False` and are opt-in.
 
-### `--github-skip-archived-repo-manifests`
+### `--github-incremental-sync`
 
-Skips the dependency graph manifest fetch for archived and disabled repos.
+Enables all push-based skip optimizations in a single flag:
 
-### `--github-skip-archived-actions-sync`
-
-Skips the Actions sync (workflows, secrets, variables, environments) for
-archived and disabled repos.
-
-### `--github-skip-archived-commits-sync`
-
-Skips the commits sync for archived and disabled repos.
-
-### `--github-skip-stale-commits-sync`
-
-Skips the per-repo commit-history GraphQL fetch for repos whose `pushedat`
-is older than the commit lookback window (`--github-commit-lookback-days`,
-default 30 days). Repos with no `pushedat` on record are never skipped.
-
-### `--github-incremental-actions-workflow-sync`
-
-Skips the per-repo workflow YAML fetch and parse for repos whose `pushedat`
-matches `synced_pushedat`. Secrets, variables, and environments are always
-fetched regardless — they can change without a push.
-
-When a repo's workflow fetch is skipped, its existing `GitHubWorkflow` and
-`GitHubAction` nodes are touched (their `lastupdated` refreshed to the
-current update tag) so the end-of-run stale-tag cleanup does not delete them.
-
-### `--github-incremental-dep-manifest-sync`
-
-Skips the nested GraphQL manifest and dependency pagination for repos whose
-`pushedat` matches `synced_pushedat`. When skipped, existing
-`DependencyGraphManifest` and `Dependency` nodes are touched to survive
-stale-tag cleanup.
+- **Archived/disabled repos** are excluded from the Actions, commits, and
+  manifest syncs. Archived repos cannot receive new pushes or workflow
+  changes, so re-fetching them is pure waste.
+- **Commits** are skipped for repos with no push within the lookback window
+  (`--github-commit-lookback-days`, default 30 days). A repo with no push
+  in that window cannot have any commits in the window either. Repos with no
+  `pushedat` on record are never skipped.
+- **Workflow YAML** is not re-fetched for repos whose `pushedat` matches
+  `synced_pushedat`. Secrets, variables, and environments are always
+  fetched regardless — they can change without a push. Existing
+  `GitHubWorkflow` and `GitHubAction` nodes for skipped repos are touched
+  (their `lastupdated` refreshed) so the stale-tag cleanup does not delete them.
+- **Dependency graph manifests** are not re-fetched for repos whose
+  `pushedat` matches `synced_pushedat`. Existing `DependencyGraphManifest`
+  and `Dependency` nodes for skipped repos are similarly touched to survive
+  stale-tag cleanup.
 
 ### `--github-parallel-workers N`
 
@@ -79,12 +64,7 @@ with worker count.
 cartography \
   --selected-modules create-indexes,github \
   --github-config-env-var GITHUB_CONFIG \
-  --github-skip-archived-repo-manifests \
-  --github-skip-archived-actions-sync \
-  --github-skip-archived-commits-sync \
-  --github-skip-stale-commits-sync \
-  --github-incremental-actions-workflow-sync \
-  --github-incremental-dep-manifest-sync \
+  --github-incremental-sync \
   --github-parallel-workers 4
 ```
 

@@ -135,9 +135,8 @@ def start_github_ingestion(
             token,
             api_url,
             org_name,
-            config.github_skip_archived_repo_manifests,
             parallel_workers=config.github_parallel_workers,
-            github_incremental_dep_manifest_sync=config.github_incremental_dep_manifest_sync,
+            incremental_sync=config.github_incremental_sync,
         )
 
         cartography.intel.github.personal_access_tokens.sync(
@@ -185,8 +184,8 @@ def start_github_ingestion(
             api_url,
             org_name,
             parallel_workers=config.github_parallel_workers,
-            skip_archived_repos=config.github_skip_archived_actions_sync,
-            skip_unchanged_repos=config.github_incremental_actions_workflow_sync,
+            skip_archived_repos=config.github_incremental_sync,
+            skip_unchanged_repos=config.github_incremental_sync,
         )
 
         # Sync commit relationships for the configured lookback period.
@@ -194,7 +193,7 @@ def start_github_ingestion(
         repo_names = _get_repos_from_graph(
             neo4j_session,
             org_name,
-            skip_archived=config.github_skip_archived_commits_sync,
+            skip_archived=config.github_incremental_sync,
         )
         cartography.intel.github.commits.sync_github_commits(
             neo4j_session,
@@ -204,7 +203,7 @@ def start_github_ingestion(
             repo_names,
             common_job_parameters["UPDATE_TAG"],
             config.github_commit_lookback_days,
-            skip_stale_repos=config.github_skip_stale_commits_sync,
+            skip_stale_repos=config.github_incremental_sync,
         )
 
         repos_json = cartography.intel.github.repos.get(token, api_url, org_name)
