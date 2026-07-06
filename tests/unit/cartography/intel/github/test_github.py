@@ -23,6 +23,7 @@ from cartography.intel.github.util import handle_rate_limit_sleep
 from cartography.intel.github.util import is_github_dotcom_api_url
 from tests.data.github.rate_limit import RATE_LIMIT_RESPONSE_JSON
 
+
 @patch("cartography.intel.github.repos.cleanup_orphaned_github_branches")
 @patch("cartography.intel.github.repos.cleanup_global_resources")
 @patch("cartography.intel.github.users.cleanup")
@@ -472,7 +473,12 @@ def test_fetch_all_returns_partial_data_after_exhausting_retries(
     ]
 
     result, _ = fetch_all(
-        "token", "api_url", "org", "query", "repositories", retries=retries,
+        "token",
+        "api_url",
+        "org",
+        "query",
+        "repositories",
+        retries=retries,
     )
 
     assert result.nodes == [{"name": "repo1"}, {"name": "repo2"}]
@@ -516,9 +522,9 @@ def test_fetch_all_raises_after_persistent_502s_at_degraded_page_size(
     mock_fetch_page.side_effect = [
         HTTPError("bad gateway", response=response_502),  # reduces count 2→1
         HTTPError("bad gateway", response=response_502),  # retry=1
-        success_with_next,                                 # retry should NOT reset
+        success_with_next,  # retry should NOT reset
         HTTPError("bad gateway", response=response_502),  # retry=2
-        success_with_next,                                 # retry should NOT reset
+        success_with_next,  # retry should NOT reset
         HTTPError("bad gateway", response=response_502),  # retry=3 → break
     ]
 
@@ -558,8 +564,8 @@ def test_fetch_all_raises_after_retries_when_502_at_page_size_1(
         "query",
         "repositories",
         count=1,
-            retries=retries,
-        )
+        retries=retries,
+    )
 
     assert mock_fetch_page.call_count == retries
     assert result.nodes == []

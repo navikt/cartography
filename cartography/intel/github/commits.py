@@ -156,9 +156,7 @@ def _get_repo_pushedat_map(
         repo_urls=list(repo_urls.values()),
     )
     pushedat_by_url = {row["url"]: row["pushedat"] for row in rows}
-    return {
-        repo_name: pushedat_by_url.get(url) for repo_name, url in repo_urls.items()
-    }
+    return {repo_name: pushedat_by_url.get(url) for repo_name, url in repo_urls.items()}
 
 
 def process_repo_commits_batch(
@@ -193,7 +191,9 @@ def process_repo_commits_batch(
     lookback_date = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
     if skip_stale_repos:
-        pushedat_by_repo = _get_repo_pushedat_map(neo4j_session, organization, repo_names)
+        pushedat_by_repo = _get_repo_pushedat_map(
+            neo4j_session, organization, repo_names
+        )
         eligible_repo_names = []
         skipped_count = 0
         for repo_name in repo_names:

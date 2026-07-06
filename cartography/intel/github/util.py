@@ -239,6 +239,7 @@ def fetch_all(
     retry = 0
     null_resource_retry = 0
     page_number = 0
+    initial_count = kwargs.get("count")
 
     while has_next_page:
         exc: Any = None
@@ -247,7 +248,11 @@ def fetch_all(
             # But we still need at least one call to the REST endpoint in case the graphql remaining is already 0
             handle_rate_limit_sleep(token)
             resp = fetch_page(token, api_url, organization, query, cursor, **kwargs)
-            retry = 0
+            # Only reset retry counter if the page size has not been degraded by a 502.
+            # If count has been reduced, we keep accumulating retry so persistent errors
+            # at a degraded page size eventually exhaust retries rather than looping forever.
+            if kwargs.get("count") == initial_count:
+                retry = 0
         except requests.exceptions.Timeout as err:
             retry += 1
             exc = err

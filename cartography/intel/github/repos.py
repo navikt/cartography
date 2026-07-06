@@ -4,11 +4,11 @@ import json
 import logging
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import as_completed
 from collections import defaultdict
 from collections import namedtuple
 from collections.abc import Callable
+from concurrent.futures import as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 from typing import cast
@@ -517,7 +517,9 @@ def _fetch_manifests_for_repo(
     repo_name = repo.get("name")
     repo_url = repo.get("url", "")
     if skip_archived_repos and repo.get("isArchived"):
-        logger.debug("Skipping dependency manifest fetch for archived repo %s.", repo_name)
+        logger.debug(
+            "Skipping dependency manifest fetch for archived repo %s.", repo_name
+        )
         return repo_url, [], True, "archived"
 
     pushedat = repo.get("pushedAt")
@@ -535,9 +537,15 @@ def _fetch_manifests_for_repo(
         return repo_url, [], True, "unchanged"
 
     try:
-        manifests, repo_cleanup_safe = _get_repo_dep_manifests(token, api_url, org, str(repo_name))
+        manifests, repo_cleanup_safe = _get_repo_dep_manifests(
+            token, api_url, org, str(repo_name)
+        )
         if manifests:
-            logger.debug("Fetched %d dependency manifests for repo %s.", len(manifests), repo_name)
+            logger.debug(
+                "Fetched %d dependency manifests for repo %s.",
+                len(manifests),
+                repo_name,
+            )
         return repo_url, manifests, repo_cleanup_safe, None
     except requests.exceptions.RequestException:
         logger.warning(
@@ -719,8 +727,10 @@ def _get_dep_manifests_for_repos(
     skipped_unchanged_repo_urls: list[str] = []
 
     eligible = [
-        repo for repo in non_null_repos
-        if repo.get("name") and repo.get("url")
+        repo
+        for repo in non_null_repos
+        if repo.get("name")
+        and repo.get("url")
         and not (skip_archived_repos and repo.get("isArchived"))
     ]
     total = len(eligible)
@@ -730,7 +740,12 @@ def _get_dep_manifests_for_repos(
         futures = {
             executor.submit(
                 _fetch_manifests_for_repo,
-                repo, token, api_url, org, skip_archived_repos, skip_unchanged_repos,
+                repo,
+                token,
+                api_url,
+                org,
+                skip_archived_repos,
+                skip_unchanged_repos,
             ): repo
             for repo in eligible
         }
@@ -744,7 +759,11 @@ def _get_dep_manifests_for_repos(
             if skip_reason == "unchanged":
                 skipped_unchanged_repo_urls.append(repo_url)
             completed += 1
-            if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
+            if (
+                completed == 1
+                or completed % max(1, parallel_workers) == 0
+                or completed == total
+            ):
                 logger.info(
                     "Dep manifests progress for org %s: %d/%d repos completed.",
                     org,
@@ -754,7 +773,9 @@ def _get_dep_manifests_for_repos(
 
     if skip_unchanged_repos and neo4j_session is not None and update_tag is not None:
         _touch_skipped_dependency_manifests(
-            neo4j_session, skipped_unchanged_repo_urls, update_tag,
+            neo4j_session,
+            skipped_unchanged_repo_urls,
+            update_tag,
         )
         logger.info(
             "Dependency manifest incremental sync for org %s: skipped refetch "
@@ -829,7 +850,8 @@ def _get_repo_collaborators_inner_func(
     result: dict[str, list[UserAffiliationAndRepoPermission]] = {}
 
     eligible = [
-        repo for repo in repo_raw_data
+        repo
+        for repo in repo_raw_data
         if repo is not None and repo.get("name") and repo.get("url")
     ]
     skipped_null = len(repo_raw_data) - len([r for r in repo_raw_data if r is not None])
@@ -854,7 +876,12 @@ def _get_repo_collaborators_inner_func(
     with ThreadPoolExecutor(max_workers=parallel_workers) as executor:
         futures = {
             executor.submit(
-                _fetch_collaborators_for_repo, repo, org, api_url, token, affiliation,
+                _fetch_collaborators_for_repo,
+                repo,
+                org,
+                api_url,
+                token,
+                affiliation,
             ): repo
             for repo in eligible
         }
@@ -862,7 +889,11 @@ def _get_repo_collaborators_inner_func(
             repo_url, collabs = f.result()
             result[repo_url] = collabs
             completed += 1
-            if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
+            if (
+                completed == 1
+                or completed % max(1, parallel_workers) == 0
+                or completed == total
+            ):
                 logger.info(
                     "Collaborators (%s) progress for org %s: %d/%d repos completed.",
                     affiliation,
@@ -1128,7 +1159,8 @@ def _get_repo_rulesets_by_url(
     cache_lock = threading.Lock()
 
     eligible = [
-        repo for repo in repo_raw_data
+        repo
+        for repo in repo_raw_data
         if repo is not None and repo.get("name") and repo.get("url")
     ]
     logger.info(
@@ -1145,7 +1177,12 @@ def _get_repo_rulesets_by_url(
         futures = {
             executor.submit(
                 _fetch_rulesets_for_repo,
-                repo, token, base_url, owner, ruleset_detail_cache, cache_lock,
+                repo,
+                token,
+                base_url,
+                owner,
+                ruleset_detail_cache,
+                cache_lock,
             ): repo
             for repo in eligible
         }
@@ -1153,7 +1190,11 @@ def _get_repo_rulesets_by_url(
             repo_url, rulesets_dict = f.result()
             rulesets_by_url[repo_url] = rulesets_dict
             completed += 1
-            if completed == 1 or completed % max(1, parallel_workers) == 0 or completed == total:
+            if (
+                completed == 1
+                or completed % max(1, parallel_workers) == 0
+                or completed == total
+            ):
                 logger.info(
                     "Rulesets progress for org %s: %d/%d repos completed.",
                     organization,
@@ -2933,11 +2974,21 @@ def sync(
             direct_collabs, outside_collabs = to_synchronous(
                 to_asynchronous(
                     _get_repo_collaborators_for_multiple_repos,
-                    repos_json, "DIRECT", organization, github_url, github_api_key, parallel_workers,
+                    repos_json,
+                    "DIRECT",
+                    organization,
+                    github_url,
+                    github_api_key,
+                    parallel_workers,
                 ),
                 to_asynchronous(
                     _get_repo_collaborators_for_multiple_repos,
-                    repos_json, "OUTSIDE", organization, github_url, github_api_key, parallel_workers,
+                    repos_json,
+                    "OUTSIDE",
+                    organization,
+                    github_url,
+                    github_api_key,
+                    parallel_workers,
                 ),
             )
         else:

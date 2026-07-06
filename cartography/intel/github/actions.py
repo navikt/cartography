@@ -760,6 +760,7 @@ class _RepoActionsData:
     """All fetched-and-transformed data for a single repo's Actions resources.
     Populated by _fetch_actions_for_repo() in worker threads; consumed by
     sync() on the main thread for Neo4j writes."""
+
     repo_name: str
     repo_url: str = ""
     pushedat: str | None = None
@@ -809,19 +810,30 @@ def _fetch_actions_for_repo(
         data.workflows_skipped = True
     else:
         # Workflows
-        workflows = get_repo_workflows(github_api_key, github_url, organization, repo_name)
+        workflows = get_repo_workflows(
+            github_api_key, github_url, organization, repo_name
+        )
         if workflows:
-            transformed_workflows = transform_workflows(workflows, organization, repo_name)
+            transformed_workflows = transform_workflows(
+                workflows, organization, repo_name
+            )
             for wf in transformed_workflows:
                 content = None
                 workflow_path = wf.get("path")
                 if workflow_path:
                     content = get_workflow_content(
-                        github_api_key, github_url, organization, repo_name, workflow_path,
+                        github_api_key,
+                        github_url,
+                        organization,
+                        repo_name,
+                        workflow_path,
                     )
                 parsed = parse_workflow_yaml(content) if content else None
                 enriched_wf = enrich_workflow_with_parsed_content(
-                    wf, parsed, organization, repo_name,
+                    wf,
+                    parsed,
+                    organization,
+                    repo_name,
                 )
                 data.enriched_workflows.append(enriched_wf)
                 if parsed and wf.get("id") is not None:
@@ -831,26 +843,38 @@ def _fetch_actions_for_repo(
 
     # Environments
     environments = get_repo_environments(
-        github_api_key, github_url, organization, repo_name,
+        github_api_key,
+        github_url,
+        organization,
+        repo_name,
     )
     if environments:
         data.transformed_environments = transform_environments(
-            environments, organization, repo_name,
+            environments,
+            organization,
+            repo_name,
         )
 
     # Repo secrets and variables
     repo_secrets = get_repo_secrets(github_api_key, github_url, organization, repo_name)
     if repo_secrets:
         data.transformed_repo_secrets = transform_repo_secrets(
-            repo_secrets, organization, repo_name,
+            repo_secrets,
+            organization,
+            repo_name,
         )
 
     repo_variables = get_repo_variables(
-        github_api_key, github_url, organization, repo_name,
+        github_api_key,
+        github_url,
+        organization,
+        repo_name,
     )
     if repo_variables:
         data.transformed_repo_variables = transform_repo_variables(
-            repo_variables, organization, repo_name,
+            repo_variables,
+            organization,
+            repo_name,
         )
 
     # Environment-level secrets and variables
@@ -859,7 +883,11 @@ def _fetch_actions_for_repo(
         env_id = env["id"]
 
         env_s = get_env_secrets(
-            github_api_key, github_url, organization, repo_name, env_name,
+            github_api_key,
+            github_url,
+            organization,
+            repo_name,
+            env_name,
         )
         if env_s:
             data.env_secrets.extend(
@@ -867,11 +895,17 @@ def _fetch_actions_for_repo(
             )
 
         env_v = get_env_variables(
-            github_api_key, github_url, organization, repo_name, env_name,
+            github_api_key,
+            github_url,
+            organization,
+            repo_name,
+            env_name,
         )
         if env_v:
             data.env_variables.extend(
-                transform_env_variables(env_v, organization, repo_name, env_name, env_id)
+                transform_env_variables(
+                    env_v, organization, repo_name, env_name, env_id
+                )
             )
 
     with progress_lock:
@@ -880,7 +914,9 @@ def _fetch_actions_for_repo(
     if done == 1 or done % 50 == 0 or done == total:
         logger.info(
             "Actions fetch progress for org %s: %d/%d repos completed.",
-            organization, done, total,
+            organization,
+            done,
+            total,
         )
 
     return data
@@ -989,7 +1025,9 @@ def sync(
 
     # 2. Get repos from graph and sync repo-level resources
     repos = _get_repos_from_graph(
-        neo4j_session, organization, skip_archived_repos=skip_archived_repos,
+        neo4j_session,
+        organization,
+        skip_archived_repos=skip_archived_repos,
     )
     total = len(repos)
     logger.info(
@@ -1011,8 +1049,13 @@ def sync(
         futures = {
             executor.submit(
                 _fetch_actions_for_repo,
-                repo["name"], organization, github_api_key, github_url,
-                progress_counter, progress_lock, total,
+                repo["name"],
+                organization,
+                github_api_key,
+                github_url,
+                progress_counter,
+                progress_lock,
+                total,
                 repo_url=repo["url"],
                 pushedat=repo.get("pushedat"),
                 synced_pushedat=repo.get("synced_pushedat"),
@@ -1032,15 +1075,24 @@ def sync(
                 load_actions(neo4j_session, d.repo_actions, update_tag, org_url)
             if d.transformed_environments:
                 load_environments(
-                    neo4j_session, d.transformed_environments, update_tag, org_url,
+                    neo4j_session,
+                    d.transformed_environments,
+                    update_tag,
+                    org_url,
                 )
             if d.transformed_repo_secrets:
                 load_repo_secrets(
-                    neo4j_session, d.transformed_repo_secrets, update_tag, org_url,
+                    neo4j_session,
+                    d.transformed_repo_secrets,
+                    update_tag,
+                    org_url,
                 )
             if d.transformed_repo_variables:
                 load_repo_variables(
-                    neo4j_session, d.transformed_repo_variables, update_tag, org_url,
+                    neo4j_session,
+                    d.transformed_repo_variables,
+                    update_tag,
+                    org_url,
                 )
             if d.env_secrets:
                 load_env_secrets(neo4j_session, d.env_secrets, update_tag, org_url)

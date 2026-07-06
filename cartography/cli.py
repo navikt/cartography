@@ -4,9 +4,8 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-from pythonjsonlogger.json import JsonFormatter
-
 import typer
+from pythonjsonlogger.json import JsonFormatter
 from typing_extensions import Annotated
 
 from cartography.config import Config
