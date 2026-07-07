@@ -750,15 +750,6 @@ class CLI:
                     hidden=PANEL_GITHUB not in visible_panels,
                 ),
             ] = 30,
-            github_skip_archived_repo_manifests: Annotated[
-                bool,
-                typer.Option(
-                    "--github-skip-archived-repo-manifests",
-                    help="Skip dependency manifest fetching for archived GitHub repos.",
-                    rich_help_panel=PANEL_GITHUB,
-                    hidden=PANEL_GITHUB not in visible_panels,
-                ),
-            ] = False,
             github_parallel_workers: Annotated[
                 int,
                 typer.Option(
