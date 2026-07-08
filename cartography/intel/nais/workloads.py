@@ -40,6 +40,11 @@ query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor, $deploymentLimi
           }
           image { name tag }
           ingresses { url }
+          instances(first: 50) {
+            nodes {
+              status { state }
+            }
+          }
           deployments(first: $deploymentLimit) {
             nodes {
               id
@@ -129,7 +134,13 @@ def transform_workloads(
 
     Deployments are fetched inline per workload (most-recent-first).
     The first deployment per workload whose latest status is SUCCESS is
-    flagged is_active=True; all others are False.
+    flagged is_active=True; all others are False (kept as read-only metadata).
+
+    has_running_instance reflects Kubernetes reality:
+    - Applications: True if at least one instance reports state RUNNING.
+    - Jobs: always True — jobs are scheduled/triggered workloads that will
+      run eventually, so they are considered perpetually active if they exist
+      in NAIS regardless of their last run state.
     """
     apps = []
     all_deployments: list[dict] = []
@@ -140,13 +151,24 @@ def transform_workloads(
         env = team_env.get("environment") or {}
         image = w.get("image") or {}
         ingress_urls = [i["url"] for i in (w.get("ingresses") or []) if i.get("url")]
+        workload_type = w.get("__typename")
+
+        # Applications: check live Kubernetes instances; Jobs: always active.
+        if workload_type == "Application":
+            instances = (w.get("instances") or {}).get("nodes") or []
+            has_running_instance = any(
+                (i.get("status") or {}).get("state") == "RUNNING"
+                for i in instances
+            )
+        else:
+            has_running_instance = True
 
         app_id = w["id"]
         apps.append(
             {
                 "id": app_id,
                 "name": w.get("name"),
-                "workload_type": w.get("__typename"),
+                "workload_type": workload_type,
                 "team_slug": team.get("slug"),
                 "environment": env.get("name"),
                 "gcp_project_id": team_env.get("gcpProjectID"),
@@ -154,6 +176,7 @@ def transform_workloads(
                 "image_tag": image.get("tag"),
                 "state": w.get("appState") or w.get("jobState"),
                 "ingresses": ingress_urls,
+                "has_running_instance": has_running_instance,
             }
         )
 

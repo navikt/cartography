@@ -2,8 +2,8 @@
     "name": "NAIS active deployment analysis",
     "statements": [
         {
-            "__comment__": "Merge ACTIVE_DEPLOYMENT edge from NaisApp to its active NaisDeployment",
-            "query": "MATCH (a:NaisApp)-[:HAS_DEPLOYMENT]->(d:NaisDeployment) WHERE d.is_active = true MERGE (a)-[r:ACTIVE_DEPLOYMENT]->(d) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
+            "__comment__": "Merge ACTIVE_DEPLOYMENT from NaisApp to its most recent NaisDeployment, but only when Kubernetes confirms the app is running (has_running_instance=true). For Applications this reflects live pod state; for Jobs this is always true since they run on a schedule.",
+            "query": "MATCH (a:NaisApp {has_running_instance: true})-[:HAS_DEPLOYMENT]->(d:NaisDeployment) WITH a, d ORDER BY d.created_at DESC WITH a, head(collect(d)) AS active_d MERGE (a)-[r:ACTIVE_DEPLOYMENT]->(active_d) ON CREATE SET r.firstseen = timestamp() SET r.lastupdated = $UPDATE_TAG",
             "iterative": false
         },
         {

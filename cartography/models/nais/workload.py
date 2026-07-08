@@ -31,6 +31,7 @@ class NaisAppNodeProperties(CartographyNodeProperties):
     image_tag: PropertyRef = PropertyRef("image_tag")
     state: PropertyRef = PropertyRef("state")
     ingresses: PropertyRef = PropertyRef("ingresses")
+    has_running_instance: PropertyRef = PropertyRef("has_running_instance")
 
 
 @dataclass(frozen=True)

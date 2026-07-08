@@ -13,6 +13,12 @@ MOCK_WORKLOADS_RAW = [
         },
         "image": {"name": "ghcr.io/navikt/my-app", "tag": "abc123"},
         "ingresses": [{"url": "https://my-app.intern.nav.no"}],
+        # One running instance — Kubernetes confirms the app is live.
+        "instances": {
+            "nodes": [
+                {"status": {"state": "RUNNING"}},
+            ]
+        },
         "deployments": {
             "nodes": [
                 {
@@ -43,6 +49,37 @@ MOCK_WORKLOADS_RAW = [
         },
     },
     {
+        # Application with no running instances — should not get ACTIVE_DEPLOYMENT.
+        "__typename": "Application",
+        "id": "app-2",
+        "name": "my-stopped-app",
+        "appState": "NAIS_APPLICATION_STATE_FAILING",
+        "team": {"slug": "team-alpha"},
+        "teamEnvironment": {
+            "gcpProjectID": "my-gcp-project",
+            "environment": {"name": "prod"},
+        },
+        "image": {"name": "ghcr.io/navikt/my-stopped-app", "tag": "xyz789"},
+        "ingresses": [],
+        # No running instances — app is not live in Kubernetes.
+        "instances": {"nodes": []},
+        "deployments": {
+            "nodes": [
+                {
+                    "id": "deploy-3",
+                    "createdAt": "2024-06-03T08:00:00Z",
+                    "teamSlug": "team-alpha",
+                    "environmentName": "prod",
+                    "repository": "navikt/my-stopped-app",
+                    "deployerUsername": "carol",
+                    "commitSha": "xyz789abc",
+                    "triggerUrl": None,
+                    "statuses": {"nodes": [{"state": "SUCCESS"}]},
+                },
+            ]
+        },
+    },
+    {
         "__typename": "Job",
         "id": "job-1",
         "name": "my-job",
@@ -53,6 +90,7 @@ MOCK_WORKLOADS_RAW = [
             "environment": {"name": "prod"},
         },
         "image": {"name": "ghcr.io/navikt/my-job", "tag": "def456"},
+        # Jobs do not have an instances field — always considered active.
         "deployments": {
             "nodes": [
                 {
