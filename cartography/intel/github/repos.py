@@ -10,6 +10,7 @@ from collections.abc import Callable
 from concurrent.futures import as_completed
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 from typing import cast
 from typing import Dict
@@ -84,6 +85,7 @@ class GitHubRepoSyncResult:
     repos: list[dict[str, Any]]
     manifests: list[dict[str, Any]]
     manifests_cleanup_safe: bool
+    repo_pushedat_updates: list[dict[str, str]] = field(default_factory=list)
 
 
 GITHUB_ORG_REPOS_PAGINATED_GRAPHQL = """
@@ -3046,18 +3048,15 @@ def sync(
     )
     load(neo4j_session, common_job_parameters, repo_data)
 
-    # Write synced_pushedat bookmark for every repo that has a pushedat value.
-    # This single property is the shared signal used by the Actions, manifests,
-    # and commits incremental-skip logic to determine whether a repo has
-    # changed since the last completed repos sync.
-    _write_synced_pushedat(
-        neo4j_session,
-        [
-            {"repo_url": repo["url"], "pushedat": repo["pushedat"]}
-            for repo in repo_data["repos"]
-            if repo.get("pushedat")
-        ],
-    )
+    # Build the pushedat update list to be written by the caller (start_github_ingestion)
+    # AFTER all downstream stages (actions, manifests, commits) have completed.
+    # Writing synced_pushedat here would immediately overwrite the bookmark with the
+    # current run's pushedat before the skip comparisons have a chance to use it.
+    repo_pushedat_updates = [
+        {"repo_url": repo["url"], "pushedat": repo["pushedat"]}
+        for repo in repo_data["repos"]
+        if repo.get("pushedat")
+    ]
 
     owner_org_id = next(
         (
@@ -3106,4 +3105,5 @@ def sync(
         repos=repo_data["repos"],
         manifests=repo_data["manifests"],
         manifests_cleanup_safe=dep_manifests_cleanup_safe,
+        repo_pushedat_updates=repo_pushedat_updates,
     )

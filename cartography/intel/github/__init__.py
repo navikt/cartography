@@ -22,6 +22,7 @@ import cartography.intel.github.users
 from cartography.client.core.tx import read_list_of_values_tx
 from cartography.config import Config
 from cartography.intel.github.app_auth import make_credential
+from cartography.intel.github.repos import _write_synced_pushedat
 from cartography.util import timeit
 
 logger = logging.getLogger(__name__)
@@ -268,6 +269,14 @@ def start_github_ingestion(
                     valid_repos,
                     workflows=all_workflows,
                 )
+
+        # Write synced_pushedat now that all downstream stages have completed.
+        # This ensures the bookmark reflects the previous run's pushedat when
+        # the next run's skip comparisons read it, not the current run's value.
+        if config.github_incremental_sync:
+            _write_synced_pushedat(
+                neo4j_session, repo_sync_result.repo_pushedat_updates
+            )
 
         processed_any_org = True
 
