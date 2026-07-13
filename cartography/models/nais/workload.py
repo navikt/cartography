@@ -12,7 +12,6 @@ from cartography.models.core.relationships import OtherRelationships
 from cartography.models.core.relationships import SourceNodeMatcher
 from cartography.models.core.relationships import TargetNodeMatcher
 
-
 # ---------------------------------------------------------------------------
 # NaisApp (Application + Job workloads)
 # ---------------------------------------------------------------------------
@@ -29,6 +28,7 @@ class NaisAppNodeProperties(CartographyNodeProperties):
     gcp_project_id: PropertyRef = PropertyRef("gcp_project_id")
     image_name: PropertyRef = PropertyRef("image_name")
     image_tag: PropertyRef = PropertyRef("image_tag")
+    image_digest: PropertyRef = PropertyRef("image_digest")
     state: PropertyRef = PropertyRef("state")
     ingresses: PropertyRef = PropertyRef("ingresses")
     has_running_instance: PropertyRef = PropertyRef("has_running_instance")

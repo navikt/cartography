@@ -11,12 +11,39 @@ MOCK_WORKLOADS_RAW = [
             "gcpProjectID": "my-gcp-project",
             "environment": {"name": "prod"},
         },
-        "image": {"name": "ghcr.io/navikt/my-app", "tag": "abc123"},
+        "image": {
+            "name": "ghcr.io/navikt/my-app",
+            "tag": "abc123",
+            "digest": "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
+        },
         "ingresses": [{"url": "https://my-app.intern.nav.no"}],
         # One running instance — Kubernetes confirms the app is live.
         "instances": {
             "nodes": [
-                {"status": {"state": "RUNNING"}},
+                {
+                    "status": {"state": "RUNNING"},
+                    "image": {
+                        "digest": "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
+                        "workloadReferences": {
+                            "nodes": [
+                                {
+                                    "workload": {
+                                        "deployments": {
+                                            "nodes": [
+                                                {
+                                                    "id": "deploy-1",
+                                                    "repository": "navikt/my-app",
+                                                    "commitSha": "abc123def456",
+                                                    "deployerUsername": "alice",
+                                                }
+                                            ]
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                    },
+                },
             ]
         },
         "deployments": {
@@ -59,7 +86,11 @@ MOCK_WORKLOADS_RAW = [
             "gcpProjectID": "my-gcp-project",
             "environment": {"name": "prod"},
         },
-        "image": {"name": "ghcr.io/navikt/my-stopped-app", "tag": "xyz789"},
+        "image": {
+            "name": "ghcr.io/navikt/my-stopped-app",
+            "tag": "xyz789",
+            "digest": None,
+        },
         "ingresses": [],
         # No running instances — app is not live in Kubernetes.
         "instances": {"nodes": []},
@@ -89,7 +120,11 @@ MOCK_WORKLOADS_RAW = [
             "gcpProjectID": "my-gcp-project",
             "environment": {"name": "prod"},
         },
-        "image": {"name": "ghcr.io/navikt/my-job", "tag": "def456"},
+        "image": {
+            "name": "ghcr.io/navikt/my-job",
+            "tag": "def456",
+            "digest": None,
+        },
         # Jobs do not have an instances field — always considered active.
         "deployments": {
             "nodes": [

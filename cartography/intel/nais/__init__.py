@@ -110,12 +110,31 @@ def start_nais_ingestion(neo4j_session: neo4j.Session, config: Config) -> None:
         "analysis",
         "nais",
     )
-    for job_file in sorted(os.listdir(analysis_jobs_dir)):
-        if job_file.endswith(".json"):
-            run_analysis_job(
-                os.path.join(analysis_jobs_dir, job_file),
-                neo4j_session,
-                common_job_parameters,
-            )
+    # Jobs are executed in dependency order:
+    # 1. active_deployment  — sets ACTIVE_DEPLOYMENT edge (prerequisite for DEPLOYED_BY)
+    # 2. image_link         — tag-based RUNS_IMAGE fallback (runs before digest variant)
+    # 3. image_digest_link  — digest-based RUNS_IMAGE (supplements tag-based match)
+    # 4. gar_link           — RUNS_GAR_IMAGE for GAR images
+    # 5. deployed_by        — KubernetesContainer -[:DEPLOYED_BY]-> NaisDeployment
+    #                         (requires RUNS_IMAGE + ACTIVE_DEPLOYMENT)
+    # 6. built_from_repo    — KubernetesContainer -[:BUILT_FROM]-> GitHubRepository
+    #                         (requires DEPLOYED_BY + DEPLOYED_FROM)
+    # 7. ownership          — NaisTeam -[:RESPONSIBLE_FOR]-> KubernetesPod
+    #                         (requires RUNS_IMAGE)
+    _analysis_job_order = [
+        "nais_active_deployment.json",
+        "nais_image_link.json",
+        "nais_image_digest_link.json",
+        "nais_gar_link.json",
+        "nais_deployed_by.json",
+        "nais_built_from_repo.json",
+        "nais_ownership.json",
+    ]
+    for job_file in _analysis_job_order:
+        run_analysis_job(
+            os.path.join(analysis_jobs_dir, job_file),
+            neo4j_session,
+            common_job_parameters,
+        )
 
     logger.info("Completed NAIS sync")

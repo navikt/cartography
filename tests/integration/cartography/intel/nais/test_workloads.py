@@ -1,6 +1,5 @@
-from unittest.mock import MagicMock
-
 import os
+from unittest.mock import MagicMock
 
 import cartography.intel.nais
 import cartography.intel.nais.workloads
@@ -45,8 +44,10 @@ def _seed_github_users(neo4j_session) -> None:
 
 def test_transform_workloads():
     # Act
-    apps, deployments = cartography.intel.nais.workloads.transform_workloads(
-        tests.data.nais.workloads.MOCK_WORKLOADS_RAW
+    apps, deployments, image_deployment_links = (
+        cartography.intel.nais.workloads.transform_workloads(
+            tests.data.nais.workloads.MOCK_WORKLOADS_RAW
+        )
     )
 
     # Assert — apps
@@ -58,6 +59,10 @@ def test_transform_workloads():
     assert app["environment"] == "prod"
     assert app["image_name"] == "ghcr.io/navikt/my-app"
     assert app["image_tag"] == "abc123"
+    assert (
+        app["image_digest"]
+        == "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222"
+    )
     assert app["ingresses"] == ["https://my-app.intern.nav.no"]
     # Has one RUNNING instance — Kubernetes confirms it is live.
     assert app["has_running_instance"] is True
@@ -66,12 +71,14 @@ def test_transform_workloads():
     assert stopped_app["workload_type"] == "Application"
     # No running instances — should not receive ACTIVE_DEPLOYMENT.
     assert stopped_app["has_running_instance"] is False
+    assert stopped_app["image_digest"] is None
 
     job = next(a for a in apps if a["name"] == "my-job")
     assert job["workload_type"] == "Job"
     assert job["ingresses"] == []
     # Jobs are always considered active — they run on a schedule.
     assert job["has_running_instance"] is True
+    assert job["image_digest"] is None
 
     # Assert — deployments
     # 4 total: deploy-1 and deploy-old for app-1, deploy-3 for app-2, deploy-2 for job-1
@@ -100,6 +107,15 @@ def test_transform_workloads():
     assert d2["is_active"] is False
     assert d2["repository"] is None
     assert d2["repository_url"] is None
+
+    # Assert — image_deployment_links: only app-1 has a digest+workloadRef
+    assert len(image_deployment_links) == 1
+    link = image_deployment_links[0]
+    assert (
+        link["image_digest"]
+        == "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222"
+    )
+    assert link["deployment_id"] == "deploy-1"
 
 
 def test_load_nais_workloads(neo4j_session):
@@ -307,7 +323,9 @@ def test_active_deployment_analysis_job(neo4j_session):
         COMMON_JOB_PARAMETERS,
         _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
     )
-    active_deployment_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_active_deployment.json")
+    active_deployment_job = os.path.join(
+        NAIS_ANALYSIS_DIR, "nais_active_deployment.json"
+    )
 
     # Act
     run_analysis_job(active_deployment_job, neo4j_session, COMMON_JOB_PARAMETERS)
@@ -391,7 +409,9 @@ def test_active_deployment_picks_most_recent(neo4j_session):
         COMMON_JOB_PARAMETERS,
         _workloads_raw=raw,
     )
-    active_deployment_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_active_deployment.json")
+    active_deployment_job = os.path.join(
+        NAIS_ANALYSIS_DIR, "nais_active_deployment.json"
+    )
 
     # Act
     run_analysis_job(active_deployment_job, neo4j_session, COMMON_JOB_PARAMETERS)
@@ -422,7 +442,9 @@ def test_active_deployment_cleanup(neo4j_session):
         COMMON_JOB_PARAMETERS,
         _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
     )
-    active_deployment_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_active_deployment.json")
+    active_deployment_job = os.path.join(
+        NAIS_ANALYSIS_DIR, "nais_active_deployment.json"
+    )
     run_analysis_job(active_deployment_job, neo4j_session, COMMON_JOB_PARAMETERS)
 
     # Assert — edges exist after first sync
@@ -465,3 +487,218 @@ def test_active_deployment_cleanup(neo4j_session):
         rel_direction_right=True,
     )
     assert active_edges == {("job-1", "deploy-2")}
+
+
+def _seed_kubernetes_container(
+    neo4j_session, container_id: str, image_sha: str
+) -> None:
+    """Seed a minimal KubernetesContainer node with a known image digest."""
+    neo4j_session.run(
+        """
+        MERGE (c:KubernetesContainer {id: $id})
+        SET c.status_image_sha = $sha,
+            c.lastupdated = $update_tag
+        """,
+        id=container_id,
+        sha=image_sha,
+        update_tag=TEST_UPDATE_TAG,
+    )
+
+
+def _seed_github_repository(neo4j_session, repo_id: str) -> None:
+    """Seed a minimal GitHubRepository node."""
+    neo4j_session.run(
+        """
+        MERGE (r:GitHubRepository {id: $id})
+        SET r.lastupdated = $update_tag
+        """,
+        id=repo_id,
+        update_tag=TEST_UPDATE_TAG,
+    )
+
+
+def test_image_digest_stored_on_nais_app(neo4j_session):
+    """NaisApp.image_digest is populated from the API response when available."""
+    # Arrange
+    client = MagicMock()
+
+    # Act
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+
+    # Assert — my-app has a digest; my-stopped-app and my-job do not
+    result = {
+        row["a.id"]: row["a.image_digest"]
+        for row in neo4j_session.run("MATCH (a:NaisApp) RETURN a.id, a.image_digest")
+    }
+    assert (
+        result["app-1"]
+        == "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222"
+    )
+    assert result["app-2"] is None
+    assert result["job-1"] is None
+
+
+def test_nais_image_digest_link_analysis_job(neo4j_session):
+    """nais_image_digest_link creates RUNS_IMAGE from NaisApp to KubernetesContainer via digest."""
+    # Arrange — load workloads and seed a container with the matching digest
+    client = MagicMock()
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+    _seed_kubernetes_container(
+        neo4j_session,
+        "container-1",
+        "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
+    )
+    digest_link_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_image_digest_link.json")
+
+    # Act
+    run_analysis_job(digest_link_job, neo4j_session, COMMON_JOB_PARAMETERS)
+
+    # Assert — RUNS_IMAGE edge created between app-1 and container-1
+    edges = check_rels(
+        neo4j_session,
+        "NaisApp",
+        "id",
+        "KubernetesContainer",
+        "id",
+        "RUNS_IMAGE",
+        rel_direction_right=True,
+    )
+    assert ("app-1", "container-1") in edges
+    # app-2 and job-1 have no digest — no edge for them
+    assert not any(app_id in ("app-2", "job-1") for app_id, _ in edges)
+
+
+def test_nais_deployed_by_analysis_job(neo4j_session):
+    """nais_deployed_by creates DEPLOYED_BY from KubernetesContainer to NaisDeployment via digest."""
+    # Arrange — load workloads, run active_deployment + digest_link, seed a container
+    client = MagicMock()
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+    _seed_kubernetes_container(
+        neo4j_session,
+        "container-1",
+        "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
+    )
+    run_analysis_job(
+        os.path.join(NAIS_ANALYSIS_DIR, "nais_active_deployment.json"),
+        neo4j_session,
+        COMMON_JOB_PARAMETERS,
+    )
+    run_analysis_job(
+        os.path.join(NAIS_ANALYSIS_DIR, "nais_image_digest_link.json"),
+        neo4j_session,
+        COMMON_JOB_PARAMETERS,
+    )
+    deployed_by_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_deployed_by.json")
+
+    # Act
+    run_analysis_job(deployed_by_job, neo4j_session, COMMON_JOB_PARAMETERS)
+
+    # Assert — DEPLOYED_BY edge from container-1 to deploy-1 (the active deployment of app-1)
+    edges = check_rels(
+        neo4j_session,
+        "KubernetesContainer",
+        "id",
+        "NaisDeployment",
+        "id",
+        "DEPLOYED_BY",
+        rel_direction_right=True,
+    )
+    assert ("container-1", "deploy-1") in edges
+
+
+def test_nais_built_from_repo_analysis_job(neo4j_session):
+    """nais_built_from_repo creates BUILT_FROM from KubernetesContainer to GitHubRepository."""
+    # Arrange — seed repo first (DEPLOYED_FROM is created by load() which needs the node to exist)
+    _seed_github_repository(neo4j_session, "https://github.com/navikt/my-app")
+    client = MagicMock()
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+    _seed_kubernetes_container(
+        neo4j_session,
+        "container-1",
+        "sha256:aaaa1111bbbb2222cccc3333dddd4444eeee5555ffff6666aaaa1111bbbb2222",
+    )
+    run_analysis_job(
+        os.path.join(NAIS_ANALYSIS_DIR, "nais_active_deployment.json"),
+        neo4j_session,
+        COMMON_JOB_PARAMETERS,
+    )
+    run_analysis_job(
+        os.path.join(NAIS_ANALYSIS_DIR, "nais_image_digest_link.json"),
+        neo4j_session,
+        COMMON_JOB_PARAMETERS,
+    )
+    run_analysis_job(
+        os.path.join(NAIS_ANALYSIS_DIR, "nais_deployed_by.json"),
+        neo4j_session,
+        COMMON_JOB_PARAMETERS,
+    )
+    built_from_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_built_from_repo.json")
+
+    # Act
+    run_analysis_job(built_from_job, neo4j_session, COMMON_JOB_PARAMETERS)
+
+    # Assert — BUILT_FROM shortcut edge exists from container-1 to the GitHub repo
+    edges = check_rels(
+        neo4j_session,
+        "KubernetesContainer",
+        "id",
+        "GitHubRepository",
+        "id",
+        "BUILT_FROM",
+        rel_direction_right=True,
+    )
+    assert ("container-1", "https://github.com/navikt/my-app") in edges
+
+
+def test_nais_built_from_repo_no_op_without_deployed_by(neo4j_session):
+    """nais_built_from_repo is a no-op when DEPLOYED_BY edges are absent."""
+    # Arrange — reset graph so no DEPLOYED_BY edges bleed in from prior tests
+    neo4j_session.run("MATCH (n) DETACH DELETE n")
+    client = MagicMock()
+    cartography.intel.nais.workloads.sync(
+        neo4j_session,
+        client,
+        TEST_TENANT_ID,
+        TEST_UPDATE_TAG,
+        COMMON_JOB_PARAMETERS,
+        _workloads_raw=tests.data.nais.workloads.MOCK_WORKLOADS_RAW,
+    )
+    _seed_github_repository(neo4j_session, "https://github.com/navikt/my-app")
+    built_from_job = os.path.join(NAIS_ANALYSIS_DIR, "nais_built_from_repo.json")
+
+    # Act
+    run_analysis_job(built_from_job, neo4j_session, COMMON_JOB_PARAMETERS)
+
+    # Assert — no BUILT_FROM edges when DEPLOYED_BY chain is missing
+    result = neo4j_session.run(
+        "MATCH ()-[r:BUILT_FROM]->() RETURN count(r) AS cnt"
+    ).single()
+    assert result["cnt"] == 0

@@ -38,11 +38,28 @@ query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor, $deploymentLimi
             gcpProjectID
             environment { name }
           }
-          image { name tag }
+          image { name tag digest }
           ingresses { url }
           instances(first: 50) {
             nodes {
               status { state }
+              image {
+                digest
+                workloadReferences {
+                  nodes {
+                    workload {
+                      deployments(first: $deploymentLimit) {
+                        nodes {
+                          id
+                          repository
+                          commitSha
+                          deployerUsername
+                        }
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
           deployments(first: $deploymentLimit) {
@@ -71,7 +88,7 @@ query GetWorkloads($env: String!, $first: Int!, $cursor: Cursor, $deploymentLimi
             gcpProjectID
             environment { name }
           }
-          image { name tag }
+          image { name tag digest }
           deployments(first: $deploymentLimit) {
             nodes {
               id
@@ -129,8 +146,8 @@ def get_workloads(
 
 def transform_workloads(
     raw: list[dict[str, Any]],
-) -> tuple[list[dict], list[dict]]:
-    """Return (apps, deployments) extracted from raw workload nodes.
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Return (apps, deployments, image_deployment_links) extracted from raw workload nodes.
 
     Deployments are fetched inline per workload (most-recent-first).
     The first deployment per workload whose latest status is SUCCESS is
@@ -141,9 +158,16 @@ def transform_workloads(
     - Jobs: always True — jobs are scheduled/triggered workloads that will
       run eventually, so they are considered perpetually active if they exist
       in NAIS regardless of their last run state.
+
+    image_deployment_links contains mappings of image digest to deployment ID,
+    extracted from instance-level workloadReferences. These are used to create
+    KubernetesContainer -[:DEPLOYED_BY]-> NaisDeployment edges via analysis jobs.
+    Entries with no digest are omitted.
     """
     apps = []
     all_deployments: list[dict] = []
+    image_deployment_links: list[dict] = []
+    seen_image_deployment_pairs: set[tuple[str, str]] = set()
 
     for w in raw:
         team = w.get("team") or {}
@@ -157,13 +181,14 @@ def transform_workloads(
         if workload_type == "Application":
             instances = (w.get("instances") or {}).get("nodes") or []
             has_running_instance = any(
-                (i.get("status") or {}).get("state") == "RUNNING"
-                for i in instances
+                (i.get("status") or {}).get("state") == "RUNNING" for i in instances
             )
         else:
             has_running_instance = True
+            instances = []
 
         app_id = w["id"]
+        image_digest = image.get("digest")
         apps.append(
             {
                 "id": app_id,
@@ -174,11 +199,41 @@ def transform_workloads(
                 "gcp_project_id": team_env.get("gcpProjectID"),
                 "image_name": image.get("name"),
                 "image_tag": image.get("tag"),
+                "image_digest": image_digest,
                 "state": w.get("appState") or w.get("jobState"),
                 "ingresses": ingress_urls,
                 "has_running_instance": has_running_instance,
             }
         )
+
+        # Extract image->deployment provenance from instance workloadReferences.
+        # Each running instance carries the digest of the image it is actually
+        # running and, via workloadReferences, the deployment(s) that produced it.
+        # We deduplicate on (digest, deployment_id) so we don't emit duplicates
+        # when multiple instances share the same image.
+        for inst in instances:
+            inst_image = inst.get("image") or {}
+            inst_digest = inst_image.get("digest")
+            if not inst_digest:
+                continue
+            wl_refs = (inst_image.get("workloadReferences") or {}).get("nodes") or []
+            for ref in wl_refs:
+                workload = ref.get("workload") or {}
+                dep_nodes = (workload.get("deployments") or {}).get("nodes") or []
+                for dep in dep_nodes:
+                    dep_id = dep.get("id")
+                    if not dep_id:
+                        continue
+                    pair = (inst_digest, dep_id)
+                    if pair in seen_image_deployment_pairs:
+                        continue
+                    seen_image_deployment_pairs.add(pair)
+                    image_deployment_links.append(
+                        {
+                            "image_digest": inst_digest,
+                            "deployment_id": dep_id,
+                        }
+                    )
 
         raw_deps = (w.get("deployments") or {}).get("nodes") or []
         active_found = False
@@ -211,7 +266,7 @@ def transform_workloads(
                 }
             )
 
-    return apps, all_deployments
+    return apps, all_deployments, image_deployment_links
 
 
 @timeit
@@ -301,11 +356,12 @@ def sync(
         if _workloads_raw is not None
         else get_workloads(client, deployment_limit)
     )
-    apps, deployments = transform_workloads(raw_workloads)
+    apps, deployments, image_deployment_links = transform_workloads(raw_workloads)
     logger.info(
-        "NAIS workloads: %d workloads, %d deployments to load",
+        "NAIS workloads: %d workloads, %d deployments, %d image-deployment links to load",
         len(apps),
         len(deployments),
+        len(image_deployment_links),
     )
     load_apps(neo4j_session, apps, tenant_id, update_tag)
     load_deployments(neo4j_session, deployments, tenant_id, update_tag)
