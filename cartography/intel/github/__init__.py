@@ -91,7 +91,7 @@ def start_github_ingestion(
     skip_unscoped_cleanup: bool = False,
 ) -> None:
     """
-    If this module is configured, perform ingestion of Github data. Otherwise warn and exit.
+    If this module is configured, perform ingestion of Github  data. Otherwise warn and exit.
     :param neo4j_session: Neo4J session for database interface
     :param config: A cartography.config object
     :param skip_unscoped_cleanup: Skip cleanup of GitHub resources that are not
@@ -128,7 +128,6 @@ def start_github_ingestion(
             api_url,
             org_name,
         )
-
         repo_sync_result = cartography.intel.github.repos.sync(
             neo4j_session,
             common_job_parameters,
@@ -138,7 +137,6 @@ def start_github_ingestion(
             parallel_workers=config.github_parallel_workers,
             incremental_sync=config.github_incremental_sync,
         )
-
         cartography.intel.github.personal_access_tokens.sync(
             neo4j_session,
             common_job_parameters,
@@ -146,7 +144,6 @@ def start_github_ingestion(
             api_url,
             org_name,
         )
-
         cartography.intel.github.dependabot_alerts.sync(
             neo4j_session,
             common_job_parameters,
@@ -162,7 +159,6 @@ def start_github_ingestion(
             api_url,
             org_name,
         )
-
         cartography.intel.github.codeowners.sync(
             neo4j_session,
             common_job_parameters,
@@ -206,7 +202,12 @@ def start_github_ingestion(
             skip_stale_repos=config.github_incremental_sync,
         )
 
-        repos_json = cartography.intel.github.repos.get(token, api_url, org_name)
+        repos_json = cartography.intel.github.repos.get(
+            token,
+            api_url,
+            org_name,
+        )
+        # Filter out None entries
         valid_repos = [r for r in repos_json if r is not None]
 
         # Sync GHCR (container packages, image manifests, tags, attestations).
@@ -257,17 +258,17 @@ def start_github_ingestion(
                 additional_observed_digests=ghcr_observed_and_skipped,
             )
 
-            if valid_repos:
-                cartography.intel.github.supply_chain.sync(
-                    neo4j_session,
-                    token,
-                    api_url,
-                    org_name,
-                    common_job_parameters["UPDATE_TAG"],
-                    common_job_parameters,
-                    valid_repos,
-                    workflows=all_workflows,
-                )
+        if valid_repos:
+            cartography.intel.github.supply_chain.sync(
+                neo4j_session,
+                token,
+                api_url,
+                org_name,
+                common_job_parameters["UPDATE_TAG"],
+                common_job_parameters,
+                valid_repos,
+                workflows=all_workflows,
+            )
 
         # Write synced_pushedat now that all downstream stages have completed.
         # This ensures the bookmark reflects the previous run's pushedat when
