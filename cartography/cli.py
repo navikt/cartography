@@ -4,7 +4,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-import typerr
+import typer
 from typing_extensions import Annotated
 
 from cartography.config import Config
