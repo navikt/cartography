@@ -11,7 +11,7 @@ aws_ecs_mapping = OntologyMapping(
     module_name="aws",
     nodes=[
         OntologyNodeMapping(
-            node_label="ECSService",
+            node_label="AWSECSService",
             fields=[
                 OntologyFieldMapping(ontology_field="name", node_field="name"),
                 OntologyFieldMapping(ontology_field="region", node_field="region"),
@@ -51,8 +51,53 @@ gcp_cloudrun_job_mapping = OntologyMapping(
     ],
 )
 
+scaleway_mapping = OntologyMapping(
+    module_name="scaleway",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="ScalewayServerlessContainer",
+            fields=[
+                OntologyFieldMapping(ontology_field="name", node_field="name"),
+                OntologyFieldMapping(ontology_field="region", node_field="region"),
+                OntologyFieldMapping(ontology_field="status", node_field="status"),
+            ],
+        ),
+    ],
+)
+
+# Kubernetes workload controllers are the logical-workload peer of an ECS service
+# / Cloud Run service. They carry no region and no single provisioning-status
+# field, so only the display name is mapped.
+kubernetes_mapping = OntologyMapping(
+    module_name="kubernetes",
+    nodes=[
+        OntologyNodeMapping(
+            node_label="KubernetesDeployment",
+            fields=[OntologyFieldMapping(ontology_field="name", node_field="name")],
+        ),
+        OntologyNodeMapping(
+            node_label="KubernetesStatefulSet",
+            fields=[OntologyFieldMapping(ontology_field="name", node_field="name")],
+        ),
+        OntologyNodeMapping(
+            node_label="KubernetesDaemonSet",
+            fields=[OntologyFieldMapping(ontology_field="name", node_field="name")],
+        ),
+        OntologyNodeMapping(
+            node_label="KubernetesJob",
+            fields=[OntologyFieldMapping(ontology_field="name", node_field="name")],
+        ),
+        OntologyNodeMapping(
+            node_label="KubernetesCronJob",
+            fields=[OntologyFieldMapping(ontology_field="name", node_field="name")],
+        ),
+    ],
+)
+
 COMPUTESERVICES_ONTOLOGY_MAPPING: dict[str, OntologyMapping] = {
     "aws_ecs": aws_ecs_mapping,
     "gcp_cloudrun_service": gcp_cloudrun_service_mapping,
     "gcp_cloudrun_job": gcp_cloudrun_job_mapping,
+    "scaleway": scaleway_mapping,
+    "kubernetes": kubernetes_mapping,
 }

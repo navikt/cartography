@@ -31,6 +31,9 @@ from cartography.client.core.tx import run_write_query
 from cartography.graph.job import GraphJob
 from cartography.helpers import backoff_handler
 from cartography.intel.github.codeowners import normalize_repo_relative_path
+from cartography.intel.github.label_migrations import (
+    migrate_dependency_graph_manifest_label,
+)
 from cartography.intel.github.lockfiles import parse_npm_lock
 from cartography.intel.github.lockfiles import parse_uv_lock
 from cartography.intel.github.util import call_github_rest_api
@@ -2738,7 +2741,7 @@ def cleanup_github_branches(
     GraphJob.from_node_schema(GitHubBranchSchema(), cleanup_params).run(neo4j_session)
 
 
-# DEPRECATED: Remove this migration function when releasing v1
+# DEPRECATED: orphaned branch migration cleanup will be removed in v1.0.0.
 def cleanup_orphaned_github_branches(
     neo4j_session: neo4j.Session,
     common_job_parameters: Dict[str, Any],
@@ -3066,11 +3069,12 @@ def sync(
         ),
         f"https://github.com/{organization}",
     )
+    migrate_dependency_graph_manifest_label(neo4j_session, owner_org_id)
     cleanup_github_branches(neo4j_session, common_job_parameters, owner_org_id)
 
     # DEPRECATED: compatibility migrations to backfill the RESOURCE edge from
     # GitHubOrganization to GitHubBranchProtectionRule and
-    # DependencyGraphManifest. Scoped to the current org so a multi-org sync
+    # GitHubDependencyGraphManifest. Scoped to the current org so a multi-org sync
     # doesn't replay the same global Cypher per organization. Remove in
     # v1.0.0.
     migration_params = {**common_job_parameters, "owner_org_id": owner_org_id}

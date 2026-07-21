@@ -4,6 +4,15 @@ from cartography.models.anthropic.apikey import AnthropicApiKeyToUserRel
 from cartography.models.aws.cloudtrail.management_events import (
     AssumedRoleWithSAMLMatchLink,
 )
+
+# Raw ingest-time (:Container|:Function)-[:HAS_IMAGE]->(:Image) references,
+# whitelisted below as distinct from the analysis-derived RESOLVED_IMAGE edge.
+from cartography.models.aws.ecs.containers import ECSContainerToECRImageRel
+from cartography.models.aws.ecs.containers import (
+    ECSContainerToGCPArtifactRegistryImageRel,
+)
+from cartography.models.aws.ecs.containers import ECSContainerToGitHubContainerImageRel
+from cartography.models.aws.ecs.containers import ECSContainerToGitLabContainerImageRel
 from cartography.models.aws.ecs.containers import ECSContainerToTaskRel
 from cartography.models.aws.ecs.services import ECSServiceToECSClusterRel
 from cartography.models.aws.ecs.services import ECSServiceToECSTaskRel
@@ -27,15 +36,73 @@ from cartography.models.aws.identitycenter.awsssouser import (
 )
 from cartography.models.aws.identitycenter.awsssouser import AWSSSOUserToSSOGroupRel
 from cartography.models.aws.lambda_function.lambda_function import (
+    AWSLambdaToECRImageRel,
+)
+from cartography.models.aws.lambda_function.lambda_function import (
+    AWSLambdaToGCPArtifactRegistryImageRel,
+)
+from cartography.models.aws.lambda_function.lambda_function import (
+    AWSLambdaToGitHubContainerImageRel,
+)
+from cartography.models.aws.lambda_function.lambda_function import (
+    AWSLambdaToGitLabContainerImageRel,
+)
+from cartography.models.aws.lambda_function.lambda_function import (
     AWSLambdaToPrincipalRel,
+)
+from cartography.models.azure.container_instance import (
+    AzureContainerInstanceToECRImageRel,
+)
+from cartography.models.azure.container_instance import (
+    AzureContainerInstanceToGCPArtifactRegistryImageRel,
+)
+from cartography.models.azure.container_instance import (
+    AzureContainerInstanceToGitHubContainerImageRel,
+)
+from cartography.models.azure.container_instance import (
+    AzureContainerInstanceToGitLabContainerImageRel,
 )
 from cartography.models.azure.container_instance import (
     AzureGroupContainerToContainerInstanceRel,
 )
+from cartography.models.azure.function_app import AzureFunctionAppToECRImageRel
+from cartography.models.azure.function_app import (
+    AzureFunctionAppToGCPArtifactRegistryImageRel,
+)
+from cartography.models.azure.function_app import (
+    AzureFunctionAppToGitHubContainerImageRel,
+)
+from cartography.models.azure.function_app import (
+    AzureFunctionAppToGitLabContainerImageRel,
+)
 from cartography.models.duo.user import DuoGroupToDuoUserRel
 from cartography.models.gcp.cloudrun.job import CloudRunJobToServiceAccountRel
+from cartography.models.gcp.cloudrun.job_container import (
+    CloudRunJobContainerToArtifactRegistryImageRel,
+)
+from cartography.models.gcp.cloudrun.job_container import (
+    CloudRunJobContainerToECRImageRel,
+)
+from cartography.models.gcp.cloudrun.job_container import (
+    CloudRunJobContainerToGitHubContainerImageRel,
+)
+from cartography.models.gcp.cloudrun.job_container import (
+    CloudRunJobContainerToGitLabContainerImageRel,
+)
 from cartography.models.gcp.cloudrun.job_container import CloudRunJobToContainerRel
 from cartography.models.gcp.cloudrun.service import CloudRunServiceToServiceAccountRel
+from cartography.models.gcp.cloudrun.service_container import (
+    CloudRunServiceContainerToArtifactRegistryImageRel,
+)
+from cartography.models.gcp.cloudrun.service_container import (
+    CloudRunServiceContainerToECRImageRel,
+)
+from cartography.models.gcp.cloudrun.service_container import (
+    CloudRunServiceContainerToGitHubContainerImageRel,
+)
+from cartography.models.gcp.cloudrun.service_container import (
+    CloudRunServiceContainerToGitLabContainerImageRel,
+)
 from cartography.models.gcp.cloudrun.service_container import (
     CloudRunServiceToContainerRel,
 )
@@ -66,15 +133,36 @@ from cartography.models.gsuite.group import GSuiteGroupToMemberRel
 from cartography.models.gsuite.group import GSuiteGroupToOwnerRel
 from cartography.models.keycloak.group import KeycloakGroupToGroupRel
 from cartography.models.keycloak.group import KeycloakGroupToRoleRel
+from cartography.models.keycloak.inheritance import KeycloakUserAssumeRoleMatchLink
 from cartography.models.keycloak.inheritance import (
     KeycloakUserInheritedMemberOfGroupMatchLink,
 )
 from cartography.models.keycloak.role import KeycloakRoleToUserRel
+from cartography.models.kubernetes.containers import KubernetesContainerToECRImageRel
+from cartography.models.kubernetes.containers import (
+    KubernetesContainerToGCPArtifactRegistryImageRel,
+)
+from cartography.models.kubernetes.containers import (
+    KubernetesContainerToGitHubContainerImageRel,
+)
+from cartography.models.kubernetes.containers import (
+    KubernetesContainerToGitLabContainerImageRel,
+)
 from cartography.models.kubernetes.containers import (
     KubernetesContainerToKubernetesPodRel,
 )
+from cartography.models.kubernetes.cronjobs import (
+    KubernetesCronJobToKubernetesClusterRel,
+)
+from cartography.models.kubernetes.daemonsets import (
+    KubernetesDaemonSetToKubernetesClusterRel,
+)
+from cartography.models.kubernetes.deployments import (
+    KubernetesDeploymentToKubernetesClusterRel,
+)
 from cartography.models.kubernetes.groups import KubernetesGroupToAWSRoleRel
 from cartography.models.kubernetes.groups import KubernetesGroupToAWSUserRel
+from cartography.models.kubernetes.jobs import KubernetesJobToKubernetesClusterRel
 from cartography.models.kubernetes.namespaces import (
     KubernetesNamespaceToKubernetesClusterRel,
 )
@@ -86,6 +174,9 @@ from cartography.models.kubernetes.pods import KubernetesPodToServiceAccountRel
 from cartography.models.kubernetes.serviceaccounts import (
     KubernetesServiceAccountToAWSRoleRel,
 )
+from cartography.models.kubernetes.statefulsets import (
+    KubernetesStatefulSetToKubernetesClusterRel,
+)
 from cartography.models.kubernetes.users import KubernetesUserToAWSRoleRel
 from cartography.models.oci.group import OCIGroupToOCIUserRel
 from cartography.models.oci.policy import OCIPolicyToGroupRefRel
@@ -95,6 +186,12 @@ from cartography.models.openai.apikey import OpenAIApiKeyToSARel
 from cartography.models.openai.apikey import OpenAIApiKeyToUserRel
 from cartography.models.scaleway.iam.apikey import ScalewayApiKeyToApplicationRel
 from cartography.models.scaleway.iam.apikey import ScalewayApiKeyToUserRel
+from cartography.models.scaleway.serverless.container import (
+    ScalewayServerlessContainerToImageRel,
+)
+from cartography.models.scaleway.serverless.container import (
+    ScalewayServerlessContainerToNamespaceRel,
+)
 from cartography.models.sentry.member import SentryUserToTeamAdminOfRel
 from cartography.models.slack.group import SlackGroupToCreatorRel
 from cartography.models.tailscale.group import (
@@ -132,6 +229,13 @@ ONTOLOGY_REL_CONSTRAINTS: tuple[RelConstraint, ...] = (
     RelConstraint(
         src="ComputeNamespace", dst="ComputeCluster", label="WORKLOAD_PARENT"
     ),
+    # A logical workload controller (k8s Deployment / StatefulSet / DaemonSet /
+    # Job / CronJob) lives in a namespace.
+    RelConstraint(
+        src="ComputeService", dst="ComputeNamespace", label="WORKLOAD_PARENT"
+    ),
+    # A batch Job points at its owning CronJob (both are logical workloads).
+    RelConstraint(src="ComputeService", dst="ComputeService", label="WORKLOAD_PARENT"),
     # A user account is granted a role.
     RelConstraint(src="UserAccount", dst="PermissionRole", label="HAS_ROLE"),
     # A service account (workload identity) is granted a role. No provider
@@ -166,6 +270,27 @@ ONTOLOGY_REL_CONSTRAINTS: tuple[RelConstraint, ...] = (
     # A workload assumes a permission role to obtain its privileges.
     RelConstraint(src="ComputeInstance", dst="PermissionRole", label="ASSUMES"),
     RelConstraint(src="Function", dst="PermissionRole", label="ASSUMES"),
+    # A vulnerability finding (CVE) or a rule-based security issue affects a
+    # software package. Both finding shapes point at the same canonical Package.
+    RelConstraint(src="CVE", dst="Package", label="AFFECTS"),
+    RelConstraint(src="SecurityIssue", dst="Package", label="AFFECTS"),
+    # A container/function resolves to the concrete single-platform image it
+    # runs. Materialized by resolved_image_analysis.json from the raw HAS_IMAGE
+    # references (which are whitelisted below as a distinct semantic).
+    RelConstraint(src="Container", dst="Image", label="RESOLVED_IMAGE"),
+    RelConstraint(src="Function", dst="Image", label="RESOLVED_IMAGE"),
+    # A logical workload (ComputeService controller) runs an image. Materialized
+    # by workload_has_runtime_image_analysis, which collapses running containers/functions
+    # up the WORKLOAD_PARENT chain to the owning controller.
+    RelConstraint(src="ComputeService", dst="Image", label="HAS_RUNTIME_IMAGE"),
+    # An image/function is built from a source code repository (CI provenance).
+    RelConstraint(src="Image", dst="CodeRepository", label="PACKAGED_FROM"),
+    # NOTE: no UserAccount->CodeRepository constraint. Several distinct edges
+    # legitimately span that pair (COMMITTED_TO commit authorship, OWNER
+    # ownership, DIRECT_COLLAB_*/OUTSIDE_COLLAB_* access grants), so a single
+    # canonical label cannot be enforced here yet.
+    # A software package is deployed inside a container image.
+    RelConstraint(src="Package", dst="Image", label="DEPLOYED"),
 )
 
 
@@ -182,15 +307,26 @@ LEGACY_REL_WHITELIST: frozenset[type] = frozenset(
         ECSTaskToECSClusterRel,
         KubernetesContainerToKubernetesPodRel,
         KubernetesPodToKubernetesNamespaceRel,
-        # Kubernetes models its cluster as the tenant, so the pod's and
-        # namespace's sub_resource_relationship uses RESOURCE on a pair that
-        # the ontology also constrains as WORKLOAD_PARENT. Whitelisted until
-        # tenant scoping and the workload chain are reconciled.
+        # Kubernetes models its cluster as the tenant, so the pod's, namespace's
+        # and workload controllers' sub_resource_relationship uses RESOURCE on a
+        # pair that the ontology also constrains as WORKLOAD_PARENT. Whitelisted
+        # until tenant scoping and the workload chain are reconciled.
         KubernetesNamespaceToKubernetesClusterRel,
         KubernetesPodToKubernetesClusterRel,
+        KubernetesDeploymentToKubernetesClusterRel,
+        KubernetesStatefulSetToKubernetesClusterRel,
+        KubernetesDaemonSetToKubernetesClusterRel,
+        KubernetesJobToKubernetesClusterRel,
+        KubernetesCronJobToKubernetesClusterRel,
+        # Scaleway namespace HAS its serverless container: this is downward
+        # containment (:ComputeNamespace)-[:HAS]->(:ComputeService), the reverse
+        # of the ComputeService->ComputeNamespace WORKLOAD_PARENT constraint, so
+        # it is a distinct semantic rather than a workload-parent edge.
+        ScalewayServerlessContainerToNamespaceRel,
         # DEPRECATED: replaced by HAS_ROLE, will be removed in v1.0.0.
         AWSSSOUserToPermissionSetRel,
         KeycloakRoleToUserRel,
+        KeycloakUserAssumeRoleMatchLink,
         AWSSSOGroupToPermissionSetRel,
         KeycloakGroupToRoleRel,
         # ALLOWED_BY is a distinct "this role is assumable by that SSO user"
@@ -292,5 +428,40 @@ LEGACY_REL_WHITELIST: frozenset[type] = frozenset(
         GoogleWorkspaceUserToGroupInheritedOwnerRel,
         KeycloakUserInheritedMemberOfGroupMatchLink,
         TailscaleUserToGroupInheritedMemberMatchLink,
+        # HAS_IMAGE is the raw ingest-time (:Container|:Function)->(:Image)
+        # reference, matched by runtime digest at load time and possibly pointing
+        # at a manifest list. The canonical RESOLVED_IMAGE edge is derived from it
+        # by resolved_image_analysis.json (resolving manifest lists to the concrete
+        # single-platform image). Both coexist, so HAS_IMAGE is whitelisted as a
+        # distinct semantic rather than a violation of RESOLVED_IMAGE.
+        KubernetesContainerToECRImageRel,
+        KubernetesContainerToGitLabContainerImageRel,
+        KubernetesContainerToGCPArtifactRegistryImageRel,
+        KubernetesContainerToGitHubContainerImageRel,
+        ECSContainerToECRImageRel,
+        ECSContainerToGitLabContainerImageRel,
+        ECSContainerToGCPArtifactRegistryImageRel,
+        ECSContainerToGitHubContainerImageRel,
+        CloudRunServiceContainerToECRImageRel,
+        CloudRunServiceContainerToGitLabContainerImageRel,
+        CloudRunServiceContainerToArtifactRegistryImageRel,
+        CloudRunServiceContainerToGitHubContainerImageRel,
+        CloudRunJobContainerToECRImageRel,
+        CloudRunJobContainerToGitLabContainerImageRel,
+        CloudRunJobContainerToArtifactRegistryImageRel,
+        CloudRunJobContainerToGitHubContainerImageRel,
+        AzureContainerInstanceToECRImageRel,
+        AzureContainerInstanceToGitLabContainerImageRel,
+        AzureContainerInstanceToGCPArtifactRegistryImageRel,
+        AzureContainerInstanceToGitHubContainerImageRel,
+        ScalewayServerlessContainerToImageRel,
+        AWSLambdaToECRImageRel,
+        AWSLambdaToGitLabContainerImageRel,
+        AWSLambdaToGCPArtifactRegistryImageRel,
+        AWSLambdaToGitHubContainerImageRel,
+        AzureFunctionAppToECRImageRel,
+        AzureFunctionAppToGitLabContainerImageRel,
+        AzureFunctionAppToGCPArtifactRegistryImageRel,
+        AzureFunctionAppToGitHubContainerImageRel,
     }
 )

@@ -27,7 +27,7 @@ R -- HAS_RULESET --> GRS(GitHubRuleset)
 R -- HAS_CODEOWNER_RULE --> COR
 GRS -- CONTAINS_RULE --> RSR(GitHubRulesetRule)
 R -- REQUIRES --> D(Dependency)
-R -- HAS_MANIFEST --> M(DependencyGraphManifest)
+R -- HAS_MANIFEST --> M(GitHubDependencyGraphManifest)
 R -- HAS_WORKFLOW --> W(GitHubWorkflow)
 R -- HAS_SECRET --> RS(GitHubActionsSecret)
 R -- HAS_VARIABLE --> RV(GitHubActionsVariable)
@@ -550,7 +550,10 @@ ProgrammingLanguage nodes are shared globally across repositories and are linked
     ```
 
 
-### DependencyGraphManifest
+### GitHubDependencyGraphManifest
+
+The legacy `DependencyGraphManifest` label remains attached for compatibility until
+v1.0.0.
 
 Represents a dependency manifest file (e.g., package.json, requirements.txt, pom.xml) from GitHub's dependency graph API.
 
@@ -571,28 +574,28 @@ Represents a dependency manifest file (e.g., package.json, requirements.txt, pom
   - GitHubRepositories can have multiple dependency manifests
 
     ```
-    (GitHubRepository)-[:HAS_MANIFEST]->(DependencyGraphManifest)
+    (GitHubRepository)-[:HAS_MANIFEST]->(GitHubDependencyGraphManifest)
     ```
 
 - **Dependency** via **HAS_DEP** relationship
   - Each manifest lists specific dependencies
 
     ```
-    (DependencyGraphManifest)-[:HAS_DEP]->(Dependency)
+    (GitHubDependencyGraphManifest)-[:HAS_DEP]->(Dependency)
     ```
 
 - **GitHubCodeOwnerRule** via **MATCHES_CODEOWNER_RULE** relationship
   - Each manifest is linked to the last matching CODEOWNERS rule for its repository-relative path.
 
     ```
-    (DependencyGraphManifest)-[:MATCHES_CODEOWNER_RULE]->(GitHubCodeOwnerRule)
+    (GitHubDependencyGraphManifest)-[:MATCHES_CODEOWNER_RULE]->(GitHubCodeOwnerRule)
     ```
 
 - **GitHubOrganization** via **RESOURCE** relationship
   - Manifests are scoped to the owning organization for cleanup
 
     ```
-    (GitHubOrganization)-[:RESOURCE]->(DependencyGraphManifest)
+    (GitHubOrganization)-[:RESOURCE]->(GitHubDependencyGraphManifest)
     ```
 
 ### GitHubCodeOwnerRule
@@ -640,14 +643,14 @@ Represents one supported rule line from the effective GitHub `CODEOWNERS` file f
     (GitHubCodeOwnerRule)-[:CODEOWNER]->(GitHubUser)
     ```
 
-- **DependencyGraphManifest** via **MATCHES_CODEOWNER_RULE** relationship
+- **GitHubDependencyGraphManifest** via **MATCHES_CODEOWNER_RULE** relationship
   - Dependency manifests are linked to the last matching CODEOWNERS rule for their repository-relative path.
 
     ```
-    (DependencyGraphManifest)-[:MATCHES_CODEOWNER_RULE]->(GitHubCodeOwnerRule)
+    (GitHubDependencyGraphManifest)-[:MATCHES_CODEOWNER_RULE]->(GitHubCodeOwnerRule)
     ```
 
-### Dependency
+### GitHubDependency
 https://docs.github.com/en/graphql/reference/objects#dependencygraphdependency
 Represents a software dependency from GitHub's dependency graph manifests. This node contains information about a package dependency within a repository
 
@@ -669,7 +672,7 @@ Represents a software dependency from GitHub's dependency graph manifests. This 
 | source | Provenance of the version: `dependency_graph` from GitHub's dependency graph, or `lockfile` when an exact version was recovered from a lockfile fallback. |
 | version_confidence | Confidence in the version: `exact` (an exact version is known), `range` (only a requirement range is known), or `unknown` (no version or requirement). |
 
-> **Ontology Mapping**: This node also carries the extra label `GitHubDependency`. When `normalized_id` is populated (exact version), a canonical `Package` (ontology) node is detected as this dependency, enabling cross-scanner queries alongside Trivy, Syft, SocketDev, and GitLab packages.
+> **Ontology Mapping**: This node also carries the shared extra label `Dependency`, the ontology label common to every dependency producer (Semgrep, SocketDev, ...). When `normalized_id` is populated (exact version), a canonical `Package` (ontology) node is detected as this dependency, enabling cross-scanner queries alongside Trivy, Syft, SocketDev, and GitLab packages.
 
 > **Lockfile fallback**: GitHub's dependency graph reports some dependencies with only a version range (no exact version), so they have no `normalized_id` and cannot be projected into the Package ontology. For ecosystems with a parseable lockfile (`uv.lock` for pip, `package-lock.json` for npm), the sync fetches the lockfile co-located with the dependency's manifest (e.g. a manifest under `services/api/package.json` uses `services/api/package-lock.json`, never the repo-root lockfile) and, where it pins an exact version for a range-only dependency, fills in `version`, `type`, and `normalized_id` and sets `source` to `lockfile` and `version_confidence` to `exact`. Because a `Dependency` node is shared by `name|requirements` (not by version), if two manifests pin the same `name|requirements` to different exact versions the enrichment is declined for that node to avoid representing the wrong version. Lockfiles are fetched only for manifests that have range-only dependencies in a supported ecosystem.
 
@@ -766,11 +769,11 @@ Represents a [Dependabot alert](https://docs.github.com/en/rest/dependabot/alert
 
 Dependabot package, GHSA, CWE, and reference identifiers are currently stored as properties. Cartography does not create dependency or CVE relationships from this payload until package/dependency identity can be normalized safely across sources. CVE-backed alerts are labeled `CVE` for compatibility with CVE metadata enrichment.
 
-- **DependencyGraphManifest** via **HAS_DEP** relationship
+- **GitHubDependencyGraphManifest** via **HAS_DEP** relationship
   - Dependencies are linked to their specific manifest files
 
     ```
-    (DependencyGraphManifest)-[:HAS_DEP]->(Dependency)
+    (GitHubDependencyGraphManifest)-[:HAS_DEP]->(Dependency)
     ```
 
 Dependency nodes are deliberately shared across organizations and repositories
@@ -783,7 +786,7 @@ nodes such as `PythonLibrary`.
 
 Representation of a container package hosted on GitHub Container Registry (`ghcr.io`). Each package is the registry-side container for one or more image tags and their underlying image digests.
 
-> **Ontology Mapping**: This node has the extra label `ContainerRegistry` to enable cross-platform queries across registry repositories (e.g., `ECRRepository`, `GitLabContainerRepository`).
+> **Ontology Mapping**: This node has the extra label `ContainerRegistry` to enable cross-platform queries across registry repositories (e.g., `AWSECRRepository`, `GitLabContainerRepository`).
 
 | Field | Description |
 |-------|--------------|
@@ -828,7 +831,7 @@ Representation of a container package hosted on GitHub Container Registry (`ghcr
 
 Representation of a container image stored in GitHub Container Registry (`ghcr.io`), identified by its digest. Images are content-addressable and can be referenced by multiple tags. Manifest lists (multi-architecture images) contain references to platform-specific child images.
 
-> **Ontology Mapping**: This node has conditional extra labels based on the image type: `Image` for single-platform images (`type="image"`), or `ImageManifestList` for multi-architecture manifest lists (`type="manifest_list"`). These labels enable cross-platform queries for container images across different systems (e.g., `ECRImage`, `GCPArtifactRegistryImage`, `GitLabContainerImage`).
+> **Ontology Mapping**: This node has conditional extra labels based on the image type: `Image` for single-platform images (`type="image"`), or `ImageManifestList` for multi-architecture manifest lists (`type="manifest_list"`). These labels enable cross-platform queries for container images across different systems (e.g., `AWSECRImage`, `GCPArtifactRegistryImage`, `GitLabContainerImage`).
 
 | Field | Description |
 |-------|--------------|
@@ -908,7 +911,7 @@ Representation of a container image stored in GitHub Container Registry (`ghcr.i
 
     ```
     (:AWSLambda)-[:HAS_IMAGE]->(:GitHubContainerImage)
-    (:ECSContainer)-[:HAS_IMAGE]->(:GitHubContainerImage)
+    (:AWSECSContainer)-[:HAS_IMAGE]->(:GitHubContainerImage)
     (:KubernetesContainer)-[:HAS_IMAGE]->(:GitHubContainerImage)
     (:GCPCloudRunServiceContainer)-[:HAS_IMAGE]->(:GitHubContainerImage)
     (:GCPCloudRunJobContainer)-[:HAS_IMAGE]->(:GitHubContainerImage)
@@ -957,7 +960,7 @@ Representation of a tag inside a GitHub container package. Tags are mutable poin
 
 Representation of a container image layer stored in GitHub Container Registry. Layers are the building blocks of container images, identified by their uncompressed content hash (`diff_id`). Multiple images can share the same layers through Docker's layer deduplication.
 
-> **Ontology Mapping**: This node has the extra label `ImageLayer` to enable cross-provider queries for container image layers (e.g., `ECRImageLayer`, `GCPArtifactRegistryImageLayer`, `GitLabContainerImageLayer`).
+> **Ontology Mapping**: This node has the extra label `ImageLayer` to enable cross-provider queries for container image layers (e.g., `AWSECRImageLayer`, `GCPArtifactRegistryImageLayer`, `GitLabContainerImageLayer`).
 
 **Note**: Layers are keyed by `diff_id` (uncompressed layer digest from the image config) rather than `digest` (compressed layer digest from the manifest). This ensures consistent cross-provider layer deduplication: the same layer content may have different compressed digests in different registries but will always share the same `diff_id`.
 
@@ -1081,7 +1084,7 @@ These nodes are also shared globally across repositories. Repository-specific ve
 
 Represents a GitHub Actions workflow definition file in a repository.
 
-> **Ontology Mapping**: This node has the extra label `CICDPipeline` to enable cross-platform queries for CI/CD pipeline definitions across different systems (e.g., CodeBuildProject, GitLabCIConfig, SpaceliftStack).
+> **Ontology Mapping**: This node has the extra label `CICDPipeline` to enable cross-platform queries for CI/CD pipeline definitions across different systems (e.g., AWSCodeBuildProject, GitLabCIConfig, SpaceliftStack).
 
 | Field | Description |
 |-------|-------------|

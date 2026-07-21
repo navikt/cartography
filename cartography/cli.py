@@ -16,6 +16,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+
+def _apply_timestamp_log_format() -> None:
+    """
+    Install a formatter that prepends an ISO-8601 timestamp, level, and logger name
+    to every log line emitted through the root logger's handlers.
+
+    This is opt-in (via --log-timestamps) rather than the default because log
+    aggregators (e.g. Kibana) attach their own timestamp field to each record, and
+    embedding a second timestamp inside the message would be redundant there. See
+    https://github.com/cartography-cncf/cartography/issues/1213 for discussion.
+    """
+    formatter = logging.Formatter(
+        fmt="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%dT%H:%M:%S%z",
+    )
+    for handler in logging.getLogger().handlers:
+        handler.setFormatter(formatter)
+
+
 # Keep these local to avoid importing cartography.util (and its heavy deps) on --help/--version paths.
 STATUS_SUCCESS = 0
 STATUS_FAILURE = 1
@@ -26,7 +45,7 @@ PANEL_CORE = "Core Options"
 PANEL_NEO4J = "Neo4j Connection"
 PANEL_AWS = "AWS Options"
 PANEL_AZURE = "Azure Options"
-PANEL_ENTRA = "Entra ID Options"
+PANEL_MICROSOFT = "Microsoft Options"
 PANEL_GCP = "GCP Options"
 PANEL_OCI = "OCI Options"
 PANEL_OKTA = "Okta Options"
@@ -53,6 +72,7 @@ PANEL_TAILSCALE = "Tailscale Options"
 PANEL_OPENAI = "OpenAI Options"
 PANEL_ANTHROPIC = "Anthropic Options"
 PANEL_AIRBYTE = "Airbyte Options"
+PANEL_DATABRICKS = "Databricks Options"
 PANEL_DOCKER_SCOUT = "Docker Scout Options"
 PANEL_TRIVY = "Trivy Options"
 PANEL_SYFT = "Syft Options"
@@ -63,6 +83,7 @@ PANEL_SCALEWAY = "Scaleway Options"
 PANEL_SENTINELONE = "SentinelOne Options"
 PANEL_TENABLE = "Tenable Options"
 PANEL_KEYCLOAK = "Keycloak Options"
+PANEL_SALESFORCE = "Salesforce Options"
 PANEL_SLACK = "Slack Options"
 PANEL_SENTRY = "Sentry Options"
 PANEL_SUBIMAGE = "SubImage Options"
@@ -71,6 +92,7 @@ PANEL_WORKOS = "WorkOS Options"
 PANEL_JUMPCLOUD = "JumpCloud Options"
 PANEL_SOCKETDEV = "Socket.dev Options"
 PANEL_VERCEL = "Vercel Options"
+PANEL_CIRCLECI = "CircleCI Options"
 PANEL_STATSD = "StatsD Metrics"
 PANEL_ANALYSIS = "Analysis Options"
 
@@ -78,8 +100,8 @@ PANEL_ANALYSIS = "Analysis Options"
 MODULE_PANELS = {
     "aws": PANEL_AWS,
     "azure": PANEL_AZURE,
-    "entra": PANEL_ENTRA,
-    "microsoft": PANEL_ENTRA,
+    "entra": PANEL_MICROSOFT,
+    "microsoft": PANEL_MICROSOFT,
     "gcp": PANEL_GCP,
     "oci": PANEL_OCI,
     "okta": PANEL_OKTA,
@@ -108,6 +130,7 @@ MODULE_PANELS = {
     "openai": PANEL_OPENAI,
     "anthropic": PANEL_ANTHROPIC,
     "airbyte": PANEL_AIRBYTE,
+    "databricks": PANEL_DATABRICKS,
     "docker_scout": PANEL_DOCKER_SCOUT,
     "trivy": PANEL_TRIVY,
     "syft": PANEL_SYFT,
@@ -119,11 +142,13 @@ MODULE_PANELS = {
     "sentinelone": PANEL_SENTINELONE,
     "tenable": PANEL_TENABLE,
     "keycloak": PANEL_KEYCLOAK,
+    "salesforce": PANEL_SALESFORCE,
     "slack": PANEL_SLACK,
     "subimage": PANEL_SUBIMAGE,
     "spacelift": PANEL_SPACELIFT,
     "workos": PANEL_WORKOS,
     "vercel": PANEL_VERCEL,
+    "circleci": PANEL_CIRCLECI,
     "analysis": PANEL_ANALYSIS,
 }
 
@@ -206,6 +231,51 @@ def _resolve_report_source_option(
         )
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
+
+
+def _resolve_microsoft_credential_options(
+    *,
+    microsoft_tenant_id: str | None,
+    microsoft_client_id: str | None,
+    microsoft_client_secret_env_var: str | None,
+    entra_tenant_id: str | None,
+    entra_client_id: str | None,
+    entra_client_secret_env_var: str | None,
+) -> tuple[str | None, str | None, str | None]:
+    """Resolve CLI option names before reading the secret environment variable.
+
+    This intentionally remains separate from the config-layer resolver: CLI errors
+    use ``typer.BadParameter`` and operate on environment-variable names, while the
+    config layer validates resolved secret values and raises ``ValueError``.
+    """
+    microsoft_values = (
+        microsoft_tenant_id,
+        microsoft_client_id,
+        microsoft_client_secret_env_var,
+    )
+    entra_values = (entra_tenant_id, entra_client_id, entra_client_secret_env_var)
+
+    has_microsoft_values = any(value is not None for value in microsoft_values)
+    has_entra_values = any(value is not None for value in entra_values)
+    if has_microsoft_values and has_entra_values:
+        raise typer.BadParameter(
+            "Cannot mix Microsoft credential flags "
+            "(--microsoft-tenant-id, --microsoft-client-id, "
+            "--microsoft-client-secret-env-var) with deprecated Entra "
+            "credential flags (--entra-tenant-id, --entra-client-id, "
+            "--entra-client-secret-env-var). Use the Microsoft flags instead.",
+        )
+
+    if has_entra_values:
+        logger.warning(
+            "DEPRECATED: --entra-tenant-id/--entra-client-id/"
+            "--entra-client-secret-env-var will be removed in Cartography "
+            "v1.0.0; use --microsoft-tenant-id/--microsoft-client-id/"
+            "--microsoft-client-secret-env-var instead.",
+        )
+        return entra_values
+
+    return microsoft_values
 
 
 class CLI:
@@ -354,6 +424,19 @@ class CLI:
                     "--quiet",
                     "-q",
                     help="Restrict cartography logging to warnings and errors only.",
+                    rich_help_panel=PANEL_CORE,
+                ),
+            ] = False,
+            log_timestamps: Annotated[
+                bool,
+                typer.Option(
+                    "--log-timestamps",
+                    help=(
+                        "Prepend an ISO-8601 timestamp and level to each log line. "
+                        "Off by default so log aggregators that attach their own "
+                        "timestamp field do not get a redundant one embedded in the "
+                        "message; enable it for interactive/terminal runs."
+                    ),
                     rich_help_panel=PANEL_CORE,
                 ),
             ] = False,
@@ -548,6 +631,18 @@ class CLI:
                     hidden=PANEL_AWS not in visible_panels,
                 ),
             ] = 1000,
+            aws_ssm_public_parameter_prefix_allowlist: Annotated[
+                str | None,
+                typer.Option(
+                    "--aws-ssm-public-parameter-prefix-allowlist",
+                    help=(
+                        "Comma-separated AWS-managed public SSM parameter prefixes to ingest. "
+                        "Set to an empty string to disable public parameter ingestion."
+                    ),
+                    rich_help_panel=PANEL_AWS,
+                    hidden=PANEL_AWS not in visible_panels,
+                ),
+            ] = None,
             permission_relationships_file: Annotated[
                 str,
                 typer.Option(
@@ -624,33 +719,70 @@ class CLI:
                 ),
             ] = "cartography/data/azure_permission_relationships.yaml",
             # =================================================================
-            # Entra ID Options
+            # Microsoft Options
             # =================================================================
+            microsoft_tenant_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--microsoft-tenant-id",
+                    help="Microsoft tenant ID for Service Principal Authentication.",
+                    rich_help_panel=PANEL_MICROSOFT,
+                    hidden=PANEL_MICROSOFT not in visible_panels,
+                ),
+            ] = None,
+            microsoft_client_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--microsoft-client-id",
+                    help="Microsoft client ID for Service Principal Authentication.",
+                    rich_help_panel=PANEL_MICROSOFT,
+                    hidden=PANEL_MICROSOFT not in visible_panels,
+                ),
+            ] = None,
+            microsoft_client_secret_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--microsoft-client-secret-env-var",
+                    help="Environment variable name containing Microsoft client secret.",
+                    rich_help_panel=PANEL_MICROSOFT,
+                    hidden=PANEL_MICROSOFT not in visible_panels,
+                ),
+            ] = None,
+            # DEPRECATED: `--entra-*` credential flags will be removed in v1.0.0.
             entra_tenant_id: Annotated[
                 str | None,
                 typer.Option(
                     "--entra-tenant-id",
-                    help="Entra Tenant ID for Service Principal Authentication.",
-                    rich_help_panel=PANEL_ENTRA,
-                    hidden=PANEL_ENTRA not in visible_panels,
+                    help=(
+                        "DEPRECATED: use --microsoft-tenant-id instead. "
+                        "Will be removed in Cartography v1.0.0."
+                    ),
+                    rich_help_panel=PANEL_MICROSOFT,
+                    hidden=True,
                 ),
             ] = None,
             entra_client_id: Annotated[
                 str | None,
                 typer.Option(
                     "--entra-client-id",
-                    help="Entra Client ID for Service Principal Authentication.",
-                    rich_help_panel=PANEL_ENTRA,
-                    hidden=PANEL_ENTRA not in visible_panels,
+                    help=(
+                        "DEPRECATED: use --microsoft-client-id instead. "
+                        "Will be removed in Cartography v1.0.0."
+                    ),
+                    rich_help_panel=PANEL_MICROSOFT,
+                    hidden=True,
                 ),
             ] = None,
             entra_client_secret_env_var: Annotated[
                 str | None,
                 typer.Option(
                     "--entra-client-secret-env-var",
-                    help="Environment variable name containing Entra Client Secret.",
-                    rich_help_panel=PANEL_ENTRA,
-                    hidden=PANEL_ENTRA not in visible_panels,
+                    help=(
+                        "DEPRECATED: use --microsoft-client-secret-env-var instead. "
+                        "Will be removed in Cartography v1.0.0."
+                    ),
+                    rich_help_panel=PANEL_MICROSOFT,
+                    hidden=True,
                 ),
             ] = None,
             # =================================================================
@@ -1465,6 +1597,81 @@ class CLI:
                 ),
             ] = "https://api.airbyte.com/v1",
             # =================================================================
+            # Databricks Options
+            # =================================================================
+            databricks_workspace_url: Annotated[
+                str | None,
+                typer.Option(
+                    "--databricks-workspace-url",
+                    help="Databricks workspace URL, e.g. https://dbc-xxxx.cloud.databricks.com.",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = None,
+            databricks_token_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--databricks-token-env-var",
+                    help="Environment variable name containing the Databricks personal access token (PAT).",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = None,
+            databricks_client_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--databricks-client-id",
+                    help="Databricks OAuth M2M client ID (workspace-level service principal).",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = None,
+            databricks_client_secret_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--databricks-client-secret-env-var",
+                    help="Environment variable name containing the Databricks OAuth M2M client secret.",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = None,
+            databricks_account_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--databricks-account-id",
+                    help="Databricks account ID (AWS / GCP account console). Enables the account-level API surface.",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = None,
+            databricks_account_host: Annotated[
+                str,
+                typer.Option(
+                    "--databricks-account-host",
+                    help="Databricks account API host.",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = "https://accounts.cloud.databricks.com",
+            databricks_account_client_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--databricks-account-client-id",
+                    help="Databricks account-level OAuth M2M client ID (account service principal).",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = None,
+            databricks_account_client_secret_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--databricks-account-client-secret-env-var",
+                    help="Environment variable name containing the Databricks account-level OAuth M2M client secret.",
+                    rich_help_panel=PANEL_DATABRICKS,
+                    hidden=PANEL_DATABRICKS not in visible_panels,
+                ),
+            ] = None,
+            # =================================================================
             # Docker Scout Options
             # =================================================================
             docker_scout_source: Annotated[
@@ -1839,6 +2046,54 @@ class CLI:
                 ),
             ] = "master",
             # =================================================================
+            # Salesforce Options
+            # =================================================================
+            salesforce_login_url: Annotated[
+                str,
+                typer.Option(
+                    "--salesforce-login-url",
+                    help="Salesforce OAuth login URL (e.g. https://login.salesforce.com or a My Domain URL).",
+                    rich_help_panel=PANEL_SALESFORCE,
+                    hidden=PANEL_SALESFORCE not in visible_panels,
+                ),
+            ] = "https://login.salesforce.com",
+            salesforce_client_id: Annotated[
+                str | None,
+                typer.Option(
+                    "--salesforce-client-id",
+                    help="Salesforce connected app consumer key.",
+                    rich_help_panel=PANEL_SALESFORCE,
+                    hidden=PANEL_SALESFORCE not in visible_panels,
+                ),
+            ] = None,
+            salesforce_client_secret_env_var: Annotated[
+                str,
+                typer.Option(
+                    "--salesforce-client-secret-env-var",
+                    help="Environment variable name containing the Salesforce connected app consumer secret (client credentials flow).",
+                    rich_help_panel=PANEL_SALESFORCE,
+                    hidden=PANEL_SALESFORCE not in visible_panels,
+                ),
+            ] = "SALESFORCE_CLIENT_SECRET",
+            salesforce_username: Annotated[
+                str | None,
+                typer.Option(
+                    "--salesforce-username",
+                    help="Salesforce username to impersonate (JWT bearer flow).",
+                    rich_help_panel=PANEL_SALESFORCE,
+                    hidden=PANEL_SALESFORCE not in visible_panels,
+                ),
+            ] = None,
+            salesforce_private_key_env_var: Annotated[
+                str,
+                typer.Option(
+                    "--salesforce-private-key-env-var",
+                    help="Environment variable name containing the PEM-encoded private key (JWT bearer flow).",
+                    rich_help_panel=PANEL_SALESFORCE,
+                    hidden=PANEL_SALESFORCE not in visible_panels,
+                ),
+            ] = "SALESFORCE_PRIVATE_KEY",
+            # =================================================================
             # Slack Options
             # =================================================================
             slack_token_env_var: Annotated[
@@ -1986,6 +2241,41 @@ class CLI:
                 ),
             ] = "https://api.vercel.com",
             # =================================================================
+            # CircleCI Options
+            # =================================================================
+            circleci_token_env_var: Annotated[
+                str | None,
+                typer.Option(
+                    "--circleci-token-env-var",
+                    help="Environment variable name containing a CircleCI personal API token.",
+                    rich_help_panel=PANEL_CIRCLECI,
+                    hidden=PANEL_CIRCLECI not in visible_panels,
+                ),
+            ] = None,
+            circleci_base_url: Annotated[
+                str,
+                typer.Option(
+                    "--circleci-base-url",
+                    help="CircleCI API v2 base URL.",
+                    rich_help_panel=PANEL_CIRCLECI,
+                    hidden=PANEL_CIRCLECI not in visible_panels,
+                ),
+            ] = "https://circleci.com/api/v2",
+            circleci_project_slugs: Annotated[
+                str | None,
+                typer.Option(
+                    "--circleci-project-slugs",
+                    help=(
+                        "Comma-separated CircleCI project slugs (e.g. gh/org/repo) to sync "
+                        "in addition to those auto-discovered from each org's pipeline feed. "
+                        "Use this for projects with no recent pipeline activity, which the "
+                        "feed will not surface."
+                    ),
+                    rich_help_panel=PANEL_CIRCLECI,
+                    hidden=PANEL_CIRCLECI not in visible_panels,
+                ),
+            ] = None,
+            # =================================================================
             # StatsD Metrics Options
             # =================================================================
             statsd_enabled: Annotated[
@@ -2045,6 +2335,9 @@ class CLI:
                 logging.getLogger("cartography").setLevel(logging.WARNING)
             else:
                 logging.getLogger("cartography").setLevel(logging.INFO)
+
+            if log_timestamps:
+                _apply_timestamp_log_format()
 
             logger.debug("Launching cartography with CLI configuration")
 
@@ -2116,14 +2409,33 @@ class CLI:
                 )
                 azure_client_secret = os.environ.get(azure_client_secret_env_var)
 
-            # Read Entra client secret
-            entra_client_secret = None
-            if entra_tenant_id and entra_client_id and entra_client_secret_env_var:
+            (
+                microsoft_tenant_id,
+                microsoft_client_id,
+                microsoft_client_secret_env_var,
+            ) = _resolve_microsoft_credential_options(
+                microsoft_tenant_id=microsoft_tenant_id,
+                microsoft_client_id=microsoft_client_id,
+                microsoft_client_secret_env_var=microsoft_client_secret_env_var,
+                entra_tenant_id=entra_tenant_id,
+                entra_client_id=entra_client_id,
+                entra_client_secret_env_var=entra_client_secret_env_var,
+            )
+
+            # Read Microsoft client secret
+            microsoft_client_secret = None
+            if (
+                microsoft_tenant_id
+                and microsoft_client_id
+                and microsoft_client_secret_env_var
+            ):
                 logger.debug(
-                    "Reading Client Secret for Entra from environment variable %s",
-                    entra_client_secret_env_var,
+                    "Reading Client Secret for Microsoft from environment variable %s",
+                    microsoft_client_secret_env_var,
                 )
-                entra_client_secret = os.environ.get(entra_client_secret_env_var)
+                microsoft_client_secret = os.environ.get(
+                    microsoft_client_secret_env_var
+                )
 
             # Read Okta API key
             okta_api_key = None
@@ -2398,6 +2710,20 @@ class CLI:
                 )
                 vercel_token = os.environ.get(vercel_token_env_var)
 
+            # Read CircleCI token
+            circleci_token = None
+            if circleci_token_env_var:
+                logger.debug(
+                    "Reading CircleCI API token from environment variable %s",
+                    circleci_token_env_var,
+                )
+                circleci_token = os.environ.get(circleci_token_env_var)
+            circleci_project_slug_list = (
+                [s.strip() for s in circleci_project_slugs.split(",") if s.strip()]
+                if circleci_project_slugs
+                else None
+            )
+
             # Read Cloudflare token
             cloudflare_token = None
             if cloudflare_token_env_var:
@@ -2459,6 +2785,41 @@ class CLI:
                     airbyte_client_secret_env_var,
                 )
                 airbyte_client_secret = os.environ.get(airbyte_client_secret_env_var)
+
+            # Read Databricks credentials
+            databricks_token = None
+            if databricks_token_env_var:
+                logger.debug(
+                    "Reading Databricks PAT from environment variable %s",
+                    databricks_token_env_var,
+                )
+                databricks_token = os.environ.get(databricks_token_env_var)
+            databricks_client_secret = None
+            if databricks_client_secret_env_var:
+                # Read the secret whenever the env-var flag is set, even if
+                # --databricks-client-id is missing, so the module entry's
+                # partial-OAuth guard sees the asymmetric configuration and
+                # fails loudly instead of silently skipping ingestion.
+                logger.debug(
+                    "Reading Databricks OAuth M2M secret from environment variable %s",
+                    databricks_client_secret_env_var,
+                )
+                databricks_client_secret = os.environ.get(
+                    databricks_client_secret_env_var,
+                )
+            databricks_account_client_secret = None
+            if databricks_account_client_secret_env_var:
+                # Read the secret whenever the env-var flag is set, even if
+                # --databricks-account-client-id is missing, so the module
+                # entry's partial-OAuth guard sees the asymmetric configuration
+                # and fails loudly instead of silently skipping the account API.
+                logger.debug(
+                    "Reading Databricks account OAuth M2M secret from environment variable %s",
+                    databricks_account_client_secret_env_var,
+                )
+                databricks_account_client_secret = os.environ.get(
+                    databricks_account_client_secret_env_var,
+                )
 
             resolved_docker_scout_source = _resolve_report_source_option(
                 module="docker_scout",
@@ -2562,6 +2923,24 @@ class CLI:
                 )
                 keycloak_client_secret = os.environ.get(keycloak_client_secret_env_var)
 
+            # Read Salesforce secrets
+            salesforce_client_secret = None
+            if salesforce_client_secret_env_var:
+                logger.debug(
+                    "Reading Salesforce client secret from environment variable %s",
+                    salesforce_client_secret_env_var,
+                )
+                salesforce_client_secret = os.environ.get(
+                    salesforce_client_secret_env_var
+                )
+            salesforce_private_key = None
+            if salesforce_private_key_env_var:
+                logger.debug(
+                    "Reading Salesforce private key from environment variable %s",
+                    salesforce_private_key_env_var,
+                )
+                salesforce_private_key = os.environ.get(salesforce_private_key_env_var)
+
             # Read Slack token
             slack_token = None
             if slack_token_env_var:
@@ -2632,15 +3011,16 @@ class CLI:
                 aws_cloudtrail_management_events_lookback_hours=aws_cloudtrail_management_events_lookback_hours,
                 experimental_aws_inspector_batch=experimental_aws_inspector_batch,
                 aws_tagging_api_cleanup_batch=aws_tagging_api_cleanup_batch,
+                aws_ssm_public_parameter_prefix_allowlist=aws_ssm_public_parameter_prefix_allowlist,
                 azure_sync_all_subscriptions=azure_sync_all_subscriptions,
                 azure_sp_auth=azure_sp_auth,
                 azure_tenant_id=azure_tenant_id,
                 azure_client_id=azure_client_id,
                 azure_client_secret=azure_client_secret,
                 azure_subscription_id=azure_subscription_id,
-                entra_tenant_id=entra_tenant_id,
-                entra_client_id=entra_client_id,
-                entra_client_secret=entra_client_secret,
+                microsoft_tenant_id=microsoft_tenant_id,
+                microsoft_client_id=microsoft_client_id,
+                microsoft_client_secret=microsoft_client_secret,
                 aws_requested_syncs=aws_requested_syncs,
                 aws_guardduty_severity_threshold=aws_guardduty_severity_threshold,
                 analysis_job_directory=analysis_job_directory,
@@ -2716,6 +3096,9 @@ class CLI:
                 vercel_token=vercel_token,
                 vercel_team_id=vercel_team_id,
                 vercel_base_url=vercel_base_url,
+                circleci_token=circleci_token,
+                circleci_base_url=circleci_base_url,
+                circleci_project_slugs=circleci_project_slug_list,
                 cloudflare_token=cloudflare_token,
                 openai_apikey=openai_apikey,
                 openai_org_id=openai_org_id,
@@ -2730,6 +3113,14 @@ class CLI:
                 airbyte_client_id=airbyte_client_id,
                 airbyte_client_secret=airbyte_client_secret,
                 airbyte_api_url=airbyte_api_url,
+                databricks_workspace_url=databricks_workspace_url,
+                databricks_token=databricks_token,
+                databricks_client_id=databricks_client_id,
+                databricks_client_secret=databricks_client_secret,
+                databricks_account_id=databricks_account_id,
+                databricks_account_host=databricks_account_host,
+                databricks_account_client_id=databricks_account_client_id,
+                databricks_account_client_secret=databricks_account_client_secret,
                 # Forward the user-provided values (not resolved). Config calls
                 # resolve_report_source_with_legacy_fields() internally; the CLI's
                 # _resolve_report_source_option above runs the same logic for early
@@ -2776,6 +3167,11 @@ class CLI:
                 keycloak_client_secret=keycloak_client_secret,
                 keycloak_realm=keycloak_realm,
                 keycloak_url=keycloak_url,
+                salesforce_login_url=salesforce_login_url,
+                salesforce_client_id=salesforce_client_id,
+                salesforce_client_secret=salesforce_client_secret,
+                salesforce_username=salesforce_username,
+                salesforce_private_key=salesforce_private_key,
                 slack_token=slack_token,
                 slack_teams=slack_teams,
                 slack_channels_memberships=slack_channels_memberships,
