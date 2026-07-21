@@ -4,8 +4,7 @@ import os
 import sys
 from typing import TYPE_CHECKING
 
-import typer
-from pythonjsonlogger.json import JsonFormatter
+import typerr
 from typing_extensions import Annotated
 
 from cartography.config import Config
@@ -3204,21 +3203,7 @@ def main(argv=None):
         Does not return - calls sys.exit() with the appropriate exit code.
         Exit code 0 indicates successful execution, non-zero indicates errors.
     """
-    handler = logging.StreamHandler()
-    handler.setFormatter(
-        JsonFormatter(
-            fmt="%(asctime)s %(name)s %(levelname)s %(message)s",
-            rename_fields={
-                "asctime": "timestamp",
-                "levelname": "level",
-                "name": "logger",
-            },
-        )
-    )
-    root_logger = logging.getLogger()
-    root_logger.handlers.clear()
-    root_logger.addHandler(handler)
-    root_logger.setLevel(logging.INFO)
+    logging.basicConfig(level=logging.INFO)
     logging.getLogger("botocore").setLevel(logging.WARNING)
     logging.getLogger("googleapiclient").setLevel(logging.WARNING)
     logging.getLogger("neo4j").setLevel(logging.WARNING)

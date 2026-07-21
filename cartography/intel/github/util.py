@@ -14,8 +14,6 @@ from urllib.parse import urlunsplit
 import requests
 
 logger = logging.getLogger(__name__)
-
-
 # Connect and read timeouts of 60 seconds each; see https://requests.readthedocs.io/en/master/user/advanced/#timeouts
 _TIMEOUT = (60, 60)
 
